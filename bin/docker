@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""`docker` shim for Alliance clusters: runs toolkit images as Apptainer SIFs.
+
+The V2D toolkit shells out to `docker run/build/image/version` in ~60 places.
+Vulcan has no Docker daemon, so this translates those calls:
+  docker run [opts] IMAGE CMD...  ->  apptainer exec [binds/env] $V2D_SIF_DIR/IMAGE.sif CMD...
+  docker build -t IMAGE ...       ->  succeeds iff the SIF was prebuilt (build_module_sifs.sbatch)
+  docker image inspect IMAGE      ->  succeeds iff the SIF exists
+  docker version / info           ->  reports the shim
+"""
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+SIF_DIR = Path(os.environ.get("V2D_SIF_DIR", "/scratch/kghasemz/v2d/sif"))
+# Flags whose value is a separate argument; all of them are ignored except as noted.
+VALUE_FLAGS = {"--gpus", "--user", "-u", "--name", "--network", "--net", "--ipc", "--shm-size",
+               "-p", "--publish", "--runtime", "--entrypoint", "-w", "--workdir", "-e", "--env",
+               "-v", "--volume", "--memory", "-m", "--cpus", "--platform", "--add-host", "--hostname"}
+
+
+NVIDIA_LIB = re.compile(r"^(libcuda|libnvidia-|libnvcuvid|libnvoptix|lib\w+_nvidia)")
+
+
+def nvidia_binds() -> list[str]:
+    """Bind the node's NVIDIA driver libraries (discovered via ldconfig) into
+    /usr/local/nvidia/lib64, which the CUDA images already have on LD_LIBRARY_PATH.
+
+    Used instead of `apptainer --nv`: on Vulcan, --nv also injects the host's
+    libglvnd (libGLdispatch/libEGL, built for Ubuntu 24.04's glibc 2.38), which
+    breaks OpenGL/EGL inside the Ubuntu 22.04 toolkit images. NVIDIA's own
+    libraries only need glibc 2.7-2.9. Driver paths differ between GPU nodes,
+    hence discovery at run time.
+    """
+    out = subprocess.run(["/sbin/ldconfig", "-p"], capture_output=True, text=True).stdout
+    binds, seen = [], set()
+    for line in out.splitlines():
+        if "=>" not in line or "x86-64" not in line:
+            continue
+        soname, path = line.split("(")[0].strip(), line.split("=>")[1].strip()
+        if not NVIDIA_LIB.match(soname) or soname in seen:
+            continue
+        seen.add(soname)
+        binds.append(f"{os.path.realpath(path)}:/usr/local/nvidia/lib64/{soname}")
+    for vendor in ("/usr/share/glvnd/egl_vendor.d/10_nvidia.json", "/etc/glvnd/egl_vendor.d/10_nvidia.json"):
+        if os.path.exists(vendor):  # lets the image's own libEGL find libEGL_nvidia
+            binds.append(f"{vendor}:/usr/share/glvnd/egl_vendor.d/10_nvidia.json")
+            break
+    if not binds:
+        die("GPU requested but no NVIDIA driver libraries found via ldconfig (not on a GPU node?)")
+    return binds
+
+
+def sif_for(image: str) -> Path:
+    return SIF_DIR / f"{image.split(':', 1)[0].split('/')[-1]}.sif"
+
+
+def die(msg: str, code: int = 1):
+    print(f"[docker-shim] {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def cmd_run(args):
+    gpus, envs, binds, workdir, entrypoint = False, {}, [], None, None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if not a.startswith("-"):
+            break
+        key, eq, inline = a.partition("=")
+        if key in VALUE_FLAGS and not eq:
+            i += 1
+            val = args[i]
+        else:
+            val = inline
+        if key == "--gpus" or (key == "--runtime" and val == "nvidia"):
+            gpus = True
+        elif key in ("-e", "--env"):
+            k, _, v = val.partition("=")
+            envs[k] = v if _ else os.environ.get(k, "")
+        elif key in ("-v", "--volume"):
+            if ":" in val:
+                binds.append(val)
+            else:
+                print(f"[docker-shim] ignoring anonymous volume {val}", file=sys.stderr)
+        elif key in ("-w", "--workdir"):
+            workdir = val
+        elif key == "--entrypoint":
+            entrypoint = val
+        i += 1
+    if i >= len(args):
+        die("docker run: no image given")
+    image, command = args[i], args[i + 1:]
+    if entrypoint:
+        command = [entrypoint] + command
+    if not command:
+        die(f"docker run {image}: no command given (SIFs have no default CMD)")
+    sif = sif_for(image)
+    if not sif.exists():
+        die(f"no Apptainer image for {image} at {sif} -- build it with build_module_sifs.sbatch")
+    if workdir is None:
+        wd_file = SIF_DIR / f"{sif.stem}.def.workdir"
+        workdir = wd_file.read_text().strip() if wd_file.exists() else "/"
+
+    # Job-local disk as the container's /tmp; Docker images here use HOME=/tmp.
+    host_tmp = Path(os.environ.get("V2D_APPTAINER_TMP") or os.environ.get("SLURM_TMPDIR") or "/tmp") / "v2d_ctr_tmp"
+    host_tmp.mkdir(parents=True, exist_ok=True)
+    # HOME=/tmp like the Docker images expect; Apptainer rejects --env HOME, so
+    # use --home, plus an explicit bind so /tmp really is the job-local dir.
+    cmd = ["apptainer", "exec", "--cleanenv", "--writable-tmpfs", "--pwd", workdir,
+           "--home", f"{host_tmp}:/tmp", "-B", f"{host_tmp}:/tmp"]
+    if gpus:
+        binds = nvidia_binds() + binds
+    envs.pop("HOME", None)  # set via --home above
+    for k in ("http_proxy", "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"):
+        if k in os.environ:
+            envs.setdefault(k, os.environ[k])
+    for k, v in envs.items():
+        cmd += ["--env", f"{k}={v}"]
+    for b in binds:
+        cmd += ["-B", b]
+    cmd += [str(sif)] + command
+    if os.environ.get("V2D_SHIM_DEBUG"):
+        print("[docker-shim]", " ".join(cmd), file=sys.stderr)
+    os.execvp("apptainer", cmd)
+
+
+def image_from_build(args):
+    for i, a in enumerate(args):
+        if a in ("-t", "--tag") and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith("--tag="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv:
+        die("usage: docker {run,build,image,version}")
+    sub, rest = argv[0], argv[1:]
+    if sub == "run":
+        cmd_run(rest)
+    elif sub == "build":
+        image = image_from_build(rest)
+        if image and sif_for(image).exists():
+            print(f"[docker-shim] using prebuilt {sif_for(image)}")
+            return
+        die(f"docker build is unavailable here; build {image} with build_module_sifs.sbatch")
+    elif sub == "image" and rest[:1] == ["inspect"]:
+        sys.exit(0 if rest[1:] and all(sif_for(n).exists() for n in rest[1:]) else 1)
+    elif sub in ("version", "info"):
+        print("docker-shim (Apptainer backend)")
+    else:
+        die(f"unsupported subcommand: docker {' '.join(argv)}")
+
+
+if __name__ == "__main__":
+    main()

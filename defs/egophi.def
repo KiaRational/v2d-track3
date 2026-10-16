@@ -1,0 +1,13 @@
+Bootstrap: localimage
+From: /scratch/kghasemz/v2d/sif/agile.sif
+
+# EgoPHI (ECCV 2026, ETH SIPLab; github.com/eth-siplab/EgoPHI): dense hand/object contact and force
+# from an egocentric image + object mesh. Layered on our agile image (torch 2.5.1, pytorch3d,
+# manotorch, trimesh, chumpy); adds its extra deps. Code and weights are mounted, not baked in.
+
+%post
+    set -e
+    export PIP_NO_CACHE_DIR=1
+    pip install "torch_geometric==2.6.1" "timm==1.0.17" "smplx==0.1.28" einops easydict matplotlib
+    pip install "git+https://github.com/hassony2/manopth.git"
+    python -c "import torch_geometric, timm, manopth, smplx, matplotlib; print('egophi deps ok', torch_geometric.__version__, timm.__version__)"

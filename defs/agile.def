@@ -1,0 +1,24 @@
+Bootstrap: localimage
+From: /scratch/kghasemz/v2d/sif/base_pytorch251_cu124.sif
+
+# Runtime for our AGILE (Shi et al., SIGGRAPH 2026, arXiv 2602.04672) implementation:
+# PyTorch3D differentiable rendering (compiled with CUDA for L40S / sm_89),
+# a MANO layer, DINOv3 through HF transformers, and geometry utilities.
+
+%environment
+    export PYOPENGL_PLATFORM=egl
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1
+    apt-get update && apt-get install -y --no-install-recommends git build-essential ninja-build \
+        libgl1 libegl1 libglib2.0-0 libgomp1 && rm -rf /var/lib/apt/lists/*
+    export FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST="8.9" MAX_JOBS=16
+    pip install "numpy<2" iopath fvcore
+    pip install --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+    # chumpy: the MANO pkl files pickle chumpy arrays; the PyPI release breaks on py3.11.
+    # manotorch: identical MANO layer to the toolkit's WiLoR/HaMeR code (same meshes/joints).
+    pip install "git+https://github.com/mattloper/chumpy.git" "git+https://github.com/lixiny/manotorch.git" smplx trimesh rtree fast_simplification opencv-python-headless scipy \
+        "transformers>=4.56" huggingface-hub safetensors pillow imageio imageio-ffmpeg tqdm
+    python -c "import pytorch3d, torch; from pytorch3d.renderer import MeshRasterizer; print('pytorch3d', pytorch3d.__version__, 'cuda build', torch.cuda.is_available() or 'n/a at build')"
+    python -c "import transformers, smplx, manotorch; print('transformers', transformers.__version__)"

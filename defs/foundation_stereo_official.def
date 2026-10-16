@@ -1,0 +1,24 @@
+Bootstrap: localimage
+From: /scratch/kghasemz/v2d/sif/base_pytorch251_cu124.sif
+
+# Official FoundationStereo (CVPR 2025) PyTorch model for full-resolution metric
+# stereo depth (the toolkit's module is TensorRT-only and ships the small model).
+# xformers is optional in its DINOv2 backbone; disabled to stay on torch 2.5.1.
+
+%environment
+    export PYTHONPATH="/opt/FoundationStereo:${PYTHONPATH:-}"
+    export XFORMERS_DISABLED=1
+    export PYOPENGL_PLATFORM=egl
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1
+    # open3d (imported by Utils.py) needs EGL/X11 runtime libraries even headless.
+    apt-get update && apt-get install -y --no-install-recommends git libgl1 libegl1 libglib2.0-0 libgomp1 \
+        libx11-6 libxext6 libxrender1 libsm6 libusb-1.0-0 libudev1 \
+        && rm -rf /var/lib/apt/lists/*
+    git clone https://github.com/NVlabs/FoundationStereo.git /opt/FoundationStereo
+    cd /opt/FoundationStereo && git log -1 --format='%H %cd' > /opt/FoundationStereo.commit
+    pip install "numpy<2" scikit-image omegaconf opencv-contrib-python-headless timm scipy joblib \
+        scikit-learn ruamel.yaml trimesh pyyaml imageio einops huggingface-hub pandas open3d
+    cd /opt/FoundationStereo && python -c "import Utils, core.foundation_stereo; print('FoundationStereo imports OK')"

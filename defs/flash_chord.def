@@ -1,0 +1,30 @@
+Bootstrap: docker
+From: nvidia/cuda:13.0.2-devel-ubuntu24.04
+
+# FlashCHORD (nvidia-isaac/video_to_data @ aee95f25, the submission kit's evaluator revision),
+# converted from robotic_grounding/flash_chord/docker/Dockerfile. The locked environment is
+# installed here; the source is bind-mounted at /workspace at run time (PYTHONPATH=/workspace/src).
+# uv comes from PyPI (the ghcr.io image the Dockerfile copies it from may be unreachable).
+
+%files
+    /scratch/kghasemz/v2d/fc_src/robotic_grounding/flash_chord/pyproject.toml /opt/fc/pyproject.toml
+    /scratch/kghasemz/v2d/fc_src/robotic_grounding/flash_chord/uv.lock /opt/fc/uv.lock
+
+%environment
+    export VIRTUAL_ENV=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONPATH=/workspace/src
+    export NVIDIA_DRIVER_CAPABILITIES=all MUJOCO_GL=egl PYOPENGL_PLATFORM=egl
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y --no-install-recommends \
+        libglvnd0 libgl1 libglx0 libegl1 libgles2 libopengl0 libglu1-mesa libosmesa6 libglfw3 \
+        libx11-6 libxext6 libxrender1 libxi6 libxrandr2 libxcursor1 libxinerama1 libxfixes3 libxxf86vm1 \
+        libxkbcommon0 libxcb1 fontconfig libfreetype6 git curl ca-certificates xvfb python3-pip python3-venv \
+        && rm -rf /var/lib/apt/lists/*
+    pip3 install --break-system-packages "uv==0.11.21"
+    export UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_PYTHON_INSTALL_DIR=/opt/uv/python VIRTUAL_ENV=/opt/venv
+    uv python install 3.11.15
+    uv venv --python 3.11.15 /opt/venv
+    cd /opt/fc && uv sync --active --frozen --extra train --extra dev --no-install-project
+    /opt/venv/bin/python -c "import hydra, newton, warp, mujoco, jax; print('flash_chord deps ok', hydra.__version__, newton.__version__, warp.__version__, mujoco.__version__, jax.__version__)"

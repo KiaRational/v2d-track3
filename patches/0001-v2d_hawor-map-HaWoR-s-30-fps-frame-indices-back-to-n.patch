@@ -1,0 +1,98 @@
+From 97857374e9f5d4f594a612c770d485ac0fa7667d Mon Sep 17 00:00:00 2001
+From: kghasemz <kghasemz@ualberta.ca>
+Date: Sat, 26 Sep 2026 13:13:47 -0600
+Subject: [PATCH 1/2] v2d_hawor: map HaWoR's 30 fps frame indices back to
+ native video frames
+
+Upstream HaWoR resamples input videos to 30 fps (ffmpeg -vf fps=30) and the
+export wrote those indices as native frame numbers, so for non-30 fps videos
+(e.g. the 20.25 fps V2D Track 3 ego clips) every hand pose was paired with
+the wrong frame: offset hands while moving and 'ghost' hands after release.
+---
+ .../modules/v2d_hawor/lib/run_hawor.py        | 36 ++++++++++++++++---
+ 1 file changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/reconstruction/modules/v2d_hawor/lib/run_hawor.py b/reconstruction/modules/v2d_hawor/lib/run_hawor.py
+index 419f14f..09fd7f0 100644
+--- a/reconstruction/modules/v2d_hawor/lib/run_hawor.py
++++ b/reconstruction/modules/v2d_hawor/lib/run_hawor.py
+@@ -19,6 +19,8 @@ from dataclasses import dataclass
+ 
+ 
+ _HAWOR_ROOT = os.environ.get("HAWOR_ROOT", "/opt/hawor")
++# Frame rate upstream HaWoR resamples every video to (detect_track_video.extract_frames).
++_HAWOR_FPS = 30.0
+ _EXPORT_VERSION = 2
+ _LEFT_CONVERSION = "mirror_conjugate_axis_angle_yz"
+ _MOTION_CACHE_VERSION = 1
+@@ -347,9 +349,17 @@ def _export_camera_space_tracks(
+     start_idx: int,
+     end_idx: int,
+     frame_chunks_all=None,
++    native_fps: float | None = None,
++    native_count: int | None = None,
+ ) -> None:
+     import numpy as np
+     W, H = _image_size(seq_folder)
++    # Upstream HaWoR extracts frames with `ffmpeg -vf fps=30`, so its frame indices
++    # live on a 30 fps timeline. Map each back to the nearest native video frame by
++    # timestamp (keeping the closest HaWoR sample when several map to one frame);
++    # otherwise non-30 fps videos get hand poses from the wrong time.
++    ratio = (native_fps / _HAWOR_FPS) if native_fps else 1.0
++    best: dict[tuple[int, int], tuple[float, str, dict]] = {}
+     bboxes = _bbox_lookup(seq_folder, start_idx, end_idx)
+     chunks = frame_chunks_all if frame_chunks_all is not None else _frame_chunks(seq_folder, start_idx, end_idx)
+     os.makedirs(hand_tracks_dir, exist_ok=True)
+@@ -388,9 +398,14 @@ def _export_camera_space_tracks(
+                     # Canonical v2d hand tracks require bbox. Skip frames where
+                     # HaWoR only has an infilled/motion-only state.
+                     continue
++                native_idx = int(round(frame_idx * ratio))
++                if native_count is not None:
++                    native_idx = min(max(native_idx, 0), native_count - 1)
++                time_err = abs(frame_idx * ratio - native_idx)
+                 rec = {
+                     "track_id": int(track_id),
+-                    "frame_idx": int(frame_idx),
++                    "frame_idx": native_idx,
++                    "hawor_frame_idx": int(frame_idx),
+                     "is_right": bool(is_right),
+                     "image_size": [int(W), int(H)],
+                     "bbox": bbox,
+@@ -404,8 +419,14 @@ def _export_camera_space_tracks(
+                         "focal_length": float(focal_length),
+                     },
+                 }
+-                with open(os.path.join(out_dir, f"{frame_idx:06d}.json"), "w") as f:
+-                    json.dump(rec, f, indent=2)
++                key = (int(track_id), native_idx)
++                if key not in best or time_err < best[key][0]:
++                    best[key] = (time_err, out_dir, rec)
++    for (_, native_idx), (_, out_dir, rec) in best.items():
++        with open(os.path.join(out_dir, f"{native_idx:06d}.json"), "w") as f:
++            json.dump(rec, f, indent=2)
++    if native_count is not None:
++        start_idx, end_idx = 0, native_count
+     _write_export_metadata(hand_tracks_dir, focal_length, left_id, right_id, start_idx, end_idx)
+ 
+ 
+@@ -552,8 +573,15 @@ def run_hawor(
+     finally:
+         os.chdir(prev_cwd)
+ 
++    import cv2
++
++    cap = cv2.VideoCapture(video)
++    native_fps = float(cap.get(cv2.CAP_PROP_FPS)) or None
++    native_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or None
++    cap.release()
+     _export_camera_space_tracks(
+-        seq_folder, hand_tracks_dir, float(est_focal), left_id, right_id, start_idx, end_idx, frame_chunks_all
++        seq_folder, hand_tracks_dir, float(est_focal), left_id, right_id, start_idx, end_idx, frame_chunks_all,
++        native_fps=native_fps, native_count=native_count,
+     )
+ 
+ 
+-- 
+2.41.0
+

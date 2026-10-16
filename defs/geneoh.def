@@ -1,0 +1,27 @@
+Bootstrap: docker
+From: nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu20.04
+# GeneOH-Diffusion (HOI denoising) runtime: Python 3.8 + torch 2.2.0 cu121 + the repo's bundled
+# torch_cluster cp38 wheel + its patched manopth (installed non-editable; the repo itself is bound at run time).
+# Build: sbatch build_def_sif.sbatch defs/geneoh.def
+
+%files
+    /scratch/kghasemz/v2d/third_party/GeneOH-Diffusion/manopth /opt/geneoh_manopth
+    /scratch/kghasemz/v2d/third_party/GeneOH-Diffusion/whls /opt/geneoh_whls
+    /scratch/kghasemz/v2d/third_party/GeneOH-Diffusion/requirements.txt /opt/geneoh_requirements.txt
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y --no-install-recommends python3.8 python3.8-dev python3-pip git \
+        libgl1 libglib2.0-0 libegl1 libgomp1 ffmpeg && rm -rf /var/lib/apt/lists/*
+    ln -sf /usr/bin/python3.8 /usr/bin/python
+    python -m pip install --no-cache-dir -U "pip<24.1" setuptools wheel
+    python -m pip install --no-cache-dir torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 \
+        --index-url https://download.pytorch.org/whl/cu121
+    python -m pip install --no-cache-dir /opt/geneoh_whls/torch_cluster-1.6.3+pt22cu121-cp38-cp38-linux_x86_64.whl
+    python -m pip install --no-cache-dir -r /opt/geneoh_requirements.txt
+    python -m pip install --no-cache-dir pyarrow==14.0.2 imageio imageio-ffmpeg
+    cd /opt/geneoh_manopth && python -m pip install --no-cache-dir .
+    python -c "import torch, torch_cluster, manopth, trimesh, chumpy; print(torch.__version__)"
+
+%environment
+    export PYTHONNOUSERSITE=1

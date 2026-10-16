@@ -1,0 +1,20 @@
+{
+ "features": [
+  "free_space",
+  "depth_agree",
+  "mask_iou"
+ ],
+ "transform": [
+  "x",
+  "1-x",
+  "1-x"
+ ],
+ "coef": [
+  1.2871170505230103,
+  1.3590414995994888,
+  2.0974292248446957
+ ],
+ "intercept": -1.8340443688155808,
+ "err_cm": 3.0,
+ "note": "fitted on the 20 public episodes (mocap); thresholds chosen with leave-one-episode-out"
+}

@@ -1,0 +1,24 @@
+Bootstrap: localimage
+From: /scratch/kghasemz/v2d/sif/base_pytorch251_cu124.sif
+
+# SAM 3 ("Segment Anything with Concepts", Meta) through HF transformers, for the
+# Stage-5 v2 segmenter plug-in (stages/objects_v2/seg_sam3.py). Weights are gated
+# (facebook/sam3): they are NOT baked in; the stage loads them from a local dir
+# (default /scratch/kghasemz/v2d/weights/sam3) that the user downloads.
+# Also has the geometry deps of stages/objects_v2 (numpy, cv2, scipy, PIL).
+
+%environment
+    export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1
+    apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libgomp1 ffmpeg \
+        && rm -rf /var/lib/apt/lists/*
+    # SAM3 needs a recent torch; the cu126 wheels bundle their CUDA runtime.
+    pip uninstall -y torchaudio || true  # base-image build breaks against the new torch (transformers imports it)
+    pip install "torch==2.7.1" "torchvision==0.22.1" "torchaudio==2.7.1"
+    pip install "transformers>=5.0" accelerate huggingface-hub safetensors "numpy<2.3" scipy \
+        opencv-python-headless pillow av decord tqdm
+    python -c "import torch, transformers; print('torch', torch.__version__, 'transformers', transformers.__version__)"
+    python -c "from transformers import Sam3Model, Sam3Processor, Sam3TrackerVideoModel, Sam3TrackerVideoProcessor, Sam3VideoModel, Sam3VideoProcessor; print('sam3 classes ok')"

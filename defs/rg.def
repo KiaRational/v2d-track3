@@ -1,0 +1,20 @@
+Bootstrap: localimage
+From: /scratch/kghasemz/v2d/sif/agile.sif
+
+# Loader + retargeter of the official robot pipeline (nvidia-isaac/video_to_data @ aee95f25):
+#   v2d_task_library_loader (ego_recon result bundle -> ManoSharpaData, MANO FK with manotorch)
+#   robotic_grounding scripts/retarget/ego_recon_to_sharpa.py (pinocchio + pink IK -> Sharpa Wave)
+# The Dockerized version builds from nvcr.io isaac-lab, unreachable here and not needed for these
+# two steps. Layered on our agile image (torch 2.5.1, manotorch, chumpy, pytorch3d, trimesh);
+# robotic_grounding is used from the mounted source tree (PYTHONPATH), as the loader image does.
+
+%files
+    /scratch/kghasemz/v2d/fc_src/reconstruction/modules/v2d_common /opt/rg/v2d_common
+    /scratch/kghasemz/v2d/fc_src/reconstruction/modules/v2d_task_library_loader/lib /opt/rg/loader_lib
+
+%post
+    set -e
+    export PIP_NO_CACHE_DIR=1
+    pip install "pin>=3.4" "pin-pink>=3.1" "qpsolvers[daqp]" loop-rate-limiters viser pyarrow deprecation "mujoco<3.7" PyYAML tqdm usd-core
+    pip install --no-deps /opt/rg/v2d_common /opt/rg/loader_lib
+    python -c "import pinocchio, pink, viser, pyarrow, daqp, qpsolvers; assert 'daqp' in qpsolvers.available_solvers; from v2d.common.datatypes import Transform3d; print('rg deps ok', pinocchio.__version__)"

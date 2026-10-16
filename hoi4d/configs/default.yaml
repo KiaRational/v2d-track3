@@ -1,0 +1,74 @@
+# hoi4d defaults. Thresholds here are starting points derived from the existing pipeline's calibration
+# (stereo depth noise ~5 mm at 0.5 m, 20.25 fps, object sizes 5-30 cm); README: no universal thresholds --
+# they are per-config and reported next to every anomaly.
+paths:
+  root: /scratch/kghasemz/v2d
+  code: /home/kghasemz/v2d-vulcan
+
+inputs:                       # existing pipeline outputs used as the initial reconstruction
+  objects_variant: fused_all_sam3
+  hands_variant: mano_fit_hop_phys      # falls back to mano_fit_phys, then mano_fit
+  hands_fallbacks: [mano_fit_phys, mano_fit]
+
+vlm:
+  server: vllm                # local OpenAI-compatible server started inside the job
+  model_dir: /scratch/kghasemz/v2d/weights/qwen3-vl-32b-fp8
+  served_name: qwen3-vl-32b
+  port: 8011
+  max_model_len: 32768
+  gpu_memory_utilization: 0.90
+  frames_per_query: 12        # sampled frames (begin/middle/end + motion transitions)
+  image_long_side: 896
+  temperature: 0.2
+
+reviewer:                      # README "GPT-Astra" role; provider configurable, default = the local model
+  provider: local              # local | openai (needs OPENAI_API_KEY exported by the user)
+  model: qwen3-vl-32b
+  max_iterations: 6            # review/repair rounds
+  max_tool_calls: 60           # per round
+  max_wall_s: 3600
+  max_tokens_per_reply: 2048
+
+cotracker:
+  repo: /scratch/kghasemz/v2d/third_party/co-tracker
+  checkpoint: /scratch/kghasemz/v2d/weights/cotracker3/scaled_offline.pth
+  grid_per_object: 64          # query points sampled inside each object mask (first visible frame + re-seeds)
+  reseed_every: 30
+  window: 60                   # frames per offline chunk (overlapping by 10)
+
+diagnostics:
+  jump_trans_m: 0.03           # per-frame translation step beyond what velocity/acc predicts
+  jump_rot_deg: 15             # symmetry-aware
+  acc_mps2: 15.0
+  jerk_mps3: 600.0
+  contact_m: 0.010             # fingertip-surface distance counted as touching
+  penetration_m: 0.006
+  support_gap_m: 0.015         # object bottom above support with no contact -> unsupported candidate
+  slip_m: 0.015                # hand-object relative motion during a grasp
+  rest_speed_mps: 0.02
+  depth_residual_m: 0.02
+  mask_iou_min: 0.5
+  min_interval_frames: 2
+
+physics:
+  mu_range: [0.3, 1.0]         # bounded prior, sensitivity reported over the range
+  mass_kg_range: [0.05, 0.6]   # dataset placeholder 0.3 kg sits inside
+  weights:                     # README stage-9 objective
+    visual: 1.0
+    depth: 1.0
+    temporal: 0.5
+    anatomy: 0.2
+    contact: 1.0
+    collision: 2.0
+    dynamics: 0.5
+    task: 0.05
+    prior: 0.1
+  stages: [geometric, contact_selection, physical]
+  knot_every: 4                # hand/object corrections are knot splines (user ruling: no per-frame jitter)
+
+acceptance:                    # stage 10
+  min_improvement: 0.15        # targeted residual must drop >= 15 %
+  max_visual_degradation: 0.05 # depth/mask residual on the window may grow <= 5 %
+  max_global_degradation: 0.0
+  hand_obs_dev_p95_m: 0.010     # user ruling: detected hand frames stay at the observations
+  hand_jitter_tol: 0.05         # user ruling: no added finger jitter (p95 fingertip-relative acceleration)

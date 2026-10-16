@@ -1,0 +1,8 @@
+Bootstrap: docker
+From: vllm/vllm-openai:v0.31.0
+# Local OpenAI-compatible server for the hoi4d VLM (task.json) and review agent: Qwen3-VL-32B-Instruct-FP8 on one L40S.
+# Build: sbatch build_def_sif.sbatch defs/vllm.def
+%environment
+    export PYTHONNOUSERSITE=1
+%runscript
+    exec python3 -m vllm.entrypoints.openai.api_server "$@"

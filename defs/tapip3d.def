@@ -1,0 +1,22 @@
+Bootstrap: localimage
+From: /scratch/kghasemz/v2d/sif/base_pytorch251_cu124.sif
+
+# TAPIP3D (Zhang et al., NeurIPS 2025, arXiv 2504.14717; Apache-2.0) 3D point tracking in RGB-D mode:
+# our FoundationStereo depth + DROID-SLAM poses replace MegaSaM. The repo itself is bind-mounted at run
+# time from /scratch/kghasemz/v2d/third_party/TAPIP3D; only its CUDA op (pointops2) is built in here.
+
+%files
+    /scratch/kghasemz/v2d/third_party/TAPIP3D/third_party/pointops2 /opt/pointops2
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1
+    apt-get update && apt-get install -y --no-install-recommends git build-essential ninja-build \
+        libgl1 libegl1 libglib2.0-0 libgomp1 ffmpeg && rm -rf /var/lib/apt/lists/*
+    export FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST="8.9" MAX_JOBS=16
+    pip install "numpy<2" av typed-argument-parser hydra-core einops rich tqdm scipy h5py kornia sophuspy \
+        opencv-python-headless matplotlib "imageio[ffmpeg]" trimesh huggingface_hub "python-box[all]~=7.0" timm \
+        accelerate==1.0.1 transformers==4.57.3 pyarrow
+    cd /opt/pointops2 && python setup.py install
+    python -c "import torch, pointops2, kornia, sophus; print('ok torch', torch.__version__)" || \
+    python -c "import torch, kornia; import importlib; print([m for m in ('pointops2','pointops2_cuda') if importlib.util.find_spec(m)])"
