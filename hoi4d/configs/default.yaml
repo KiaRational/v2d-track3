@@ -72,3 +72,20 @@ acceptance:                    # stage 10
   max_global_degradation: 0.0
   hand_obs_dev_p95_m: 0.010     # user ruling: detected hand frames stay at the observations
   hand_jitter_tol: 0.05         # user ruling: no added finger jitter (p95 fingertip-relative acceleration)
+  object_track_gain_min: 0.10   # objects: calibrated vs public mocap (beat1/calib_accept.py): tracking gain > 10%
+  object_visual_degradation_max: 0.05  #   and image evidence degradation < 5%
+
+tracking:                      # stage 6.2 backend for every consumer (diagnostics, review tools, optimizer)
+  backend: trackeverything     # calibrated vs public mocap (beat1/calib_accept.py): +0.80 vs +0.58 cm ADD-S under the object gate
+  # options: cotracker -> hoi4d/tracks.npz | trackeverything -> hoi4d/tracks_te.npz
+
+trackeverything:               # github.com/ayushjain1144/trackeverything @ f0c18dd, CC BY-NC 4.0; runs on OUR geometry
+  checkpoint: /scratch/kghasemz/v2d/weights/trackeverything/model.pth   # gated HF repo katefgroup/TrackEverything: user downloads
+  sif: /scratch/kghasemz/v2d/sif/trackeverything.sif
+  reseed_every: 10             # object mask seeds
+  points_per_object: 64
+  hand_reseed: 5               # detected hand joints re-seeded every N frames
+  hand_depth_tol: 0.03         # seed a joint only where hand mask + stereo depth agree (not on an occluder)
+  input_scale: 0.5
+  num_iters: 3
+  vis_threshold: 0.5

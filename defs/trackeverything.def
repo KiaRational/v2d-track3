@@ -1,0 +1,22 @@
+Bootstrap: docker
+From: pytorch/pytorch:2.8.0-cuda12.9-cudnn9-devel
+
+# TrackEverything (github.com/ayushjain1144/trackeverything @ f0c18dd, CC BY-NC 4.0) inference runtime.
+# The repo itself is NOT copied in: it is bind-mounted from /scratch/kghasemz/v2d/third_party (PYTHONPATH=third_party).
+%files
+    /scratch/kghasemz/v2d/third_party/trackeverything/requirements.txt /opt/te_requirements.txt
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 ffmpeg git && rm -rf /var/lib/apt/lists/*
+    # torch/torchvision/triton/nvidia-* come with the base image; opencv headless (no X)
+    grep -vE '^(torch==|torchvision==|triton==|nvidia-|torch_scatter|opencv-python==|ipdb|ipython|viztracer|line_profiler|--extra-index-url|--find-links)' /opt/te_requirements.txt > /opt/te_req_filtered.txt
+    pip install --no-cache-dir -r /opt/te_req_filtered.txt opencv-python-headless
+    pip install --no-cache-dir torch_scatter -f https://data.pyg.org/whl/torch-2.8.0+cu129.html \
+      || (TORCH_CUDA_ARCH_LIST="8.9" FORCE_CUDA=1 pip install --no-cache-dir --no-build-isolation torch_scatter==2.1.2)
+    python -c "import torch, torch_scatter, cv2, hydra, transformers; print('torch', torch.__version__, 'scatter', torch_scatter.__version__)"
+
+%environment
+    export PYTHONPATH=/scratch/kghasemz/v2d/third_party:$PYTHONPATH
+    export HF_HOME=/scratch/kghasemz/v2d/cache/hf

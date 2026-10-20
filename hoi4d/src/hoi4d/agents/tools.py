@@ -472,10 +472,18 @@ def accept_entities(c: dict, acc: dict) -> dict:
         s0, s1 = r["severity"]
         ct = r.get("cotracker_resid_m")
         ct_gain = (ct[0] - ct[1]) / max(ct[0], 1e-6) if ct and len(ct) == 2 else 0.0
-        better = (s1 < s0 - 1e-6) or (ct_gain >= acc["min_improvement"] and s1 <= s0 + 1e-6)
         v = r.get("visual_error_prob")
         vdeg = None if not v or None in v else (v[1] - v[0]) / max(v[0], 1e-3)
-        ok = better and (vdeg is None or vdeg <= acc["max_visual_degradation"])
+        if "finger_rel_acc_p95" in r:  # hands: own severity must drop or tracking improve without severity growing
+            better = (s1 < s0 - 1e-6) or (ct_gain >= acc["min_improvement"] and s1 <= s0 + 1e-6)
+            ok = better and (vdeg is None or vdeg <= acc["max_visual_degradation"])
+        else:
+            # objects, calibrated on 20 public episodes x 2 trackers vs mocap (beat1/calib_accept.py, validation
+            # only): anomaly severity was uninformative (dropping it changed nothing; its depth term rejected
+            # mocap-better poses); tracking agreement + image evidence: 9 better / 2 worse accepted, 0 better
+            # rejected (old gate: 8 / 6 / 1).
+            ok = ct_gain > acc.get("object_track_gain_min", 0.10) and vdeg is not None \
+                and vdeg < acc.get("object_visual_degradation_max", 0.05)
         if "finger_rel_acc_p95" in r:  # hands: stay on the observations, no added jitter
             fa = r["finger_rel_acc_p95"]
             ok = ok and r["observed_joint_dev_p95_m"] <= acc.get("hand_obs_dev_p95_m", 0.01) \

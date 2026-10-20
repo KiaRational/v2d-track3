@@ -99,8 +99,11 @@ def track(run_name: str, man: dict, T_wc: np.ndarray, cfg: dict, device="cuda") 
     return {"points": N, "per_entity": {n: int((owner == k).sum()) for k, n in enumerate(names)}, "file": str(out)}
 
 
+TRACKS_FILE = "tracks.npz"  # set by the CLI from tracking.backend (cotracker -> tracks.npz, trackeverything -> tracks_te.npz)
+
+
 def load_tracks(run_name):
-    p = hio.out_dir(run_name) / "tracks.npz"
+    p = hio.out_dir(run_name) / TRACKS_FILE
     return dict(np.load(p, allow_pickle=False)) if p.exists() else None
 
 

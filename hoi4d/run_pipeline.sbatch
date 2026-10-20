@@ -8,11 +8,11 @@
 #SBATCH --output=/scratch/kghasemz/v2d/logs/%x_%j.out
 # hoi4d end-to-end for one run (README stages 1-11) on top of the existing pipeline outputs.
 #   GPUs 0,1: vLLM server (Qwen3-VL-32B-FP8, tensor parallel 2: VLM task.json + review agent); GPU 2: everything else (agile).
-# Usage: [STAGES="ingest track verify diagnose task review refine validate export"] sbatch run_pipeline.sbatch <run>
+# Usage: [STAGES="ingest track te verify diagnose task review refine validate export"] sbatch run_pipeline.sbatch <run>
 set -euo pipefail
 source ~/v2d-vulcan/env.sh
 RUN=$1
-STAGES=${STAGES:-ingest track verify diagnose task review refine validate export}
+STAGES=${STAGES:-ingest track te verify diagnose task review refine validate export}
 OUT=$V2D_ROOT/runs/$RUN/hoi4d
 mkdir -p $OUT
 has() { [[ " $STAGES " == *" $1 "* ]]; }
@@ -36,6 +36,13 @@ start_vllm() {
 
 has ingest && H ingest
 has track && H track
+if has te; then  # TrackEverything on our geometry (tracking.backend default); the CoTracker tracks stay for A/B
+  H te_prepare
+  echo "=== trackeverything $RUN ($(date +%T))"
+  apptainer exec --nv --cleanenv -B /scratch -B $HOME/v2d-vulcan:/code \
+    --env PYTHONPATH=/code/hoi4d/src:/scratch/kghasemz/v2d/third_party:/scratch/kghasemz/v2d/pyextra/te_stubs,HF_HOME=/scratch/kghasemz/v2d/cache/hf,TORCH_HOME=/scratch/kghasemz/v2d/weights/torch_home \
+    /scratch/kghasemz/v2d/sif/trackeverything.sif python -m hoi4d.tracking.trackeverything $RUN | grep -A4 query_frame_err
+fi
 if has verify; then  # existing observation critic on the initial objects (imported by diagnose)
   echo "=== verify (refine_agent) initial"
   AG bash -c "cd /code/refine_agent && V2D_OBJ_DIR=objects_sam3 python verify.py $RUN --objects fused_all_sam3 \

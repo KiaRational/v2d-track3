@@ -121,15 +121,20 @@ def cmd_refine(a, cfg):
     from .export import versions
     from .physics import optimize as po
     tb = Toolbox(a.run, cfg)
+    if a.version:  # refine from an explicit version (A/B runs), not the registry's current one
+        tb.current = a.version
     cur = tb.current
     name = a.name or f"phys_global_{len(versions.load(a.run))}"
     po.run(a.run, cur, cfg, [], name)
     c = compare(tb, cur, name)
     acc = accept(c, cfg["acceptance"])
     acc["entities"] = accept_entities(c, cfg["acceptance"])
+    keep = [e for e, d in acc["entities"].items() if d["accepted"]]
+    # always per entity (calibration vs public mocap: a whole-sequence refine made most objects worse, so a
+    # whole-version accept must not carry them in): accept the version only if EVERY entity passed its own gate
+    acc["accepted"] = bool(keep) and len(keep) == len(acc["entities"])
     versions.set_accepted(a.run, name, acc["accepted"], {"compare": c, **acc})
     final = name if acc["accepted"] else cur
-    keep = [e for e, d in acc["entities"].items() if d["accepted"]]
     if not acc["accepted"] and keep:
         # entity-wise repair: take only the entities whose own checks improved, re-validate the combination
         merged = tb.traj(cur).copy()
@@ -144,6 +149,9 @@ def cmd_refine(a, cfg):
                                                            "entities": keep}, versions.load(a.run)[cur]["hands_variant"])
         c2 = compare(tb, cur, mname)
         acc2 = accept(c2, cfg["acceptance"])
+        ent2 = accept_entities(c2, cfg["acceptance"])  # the combination must still pass every kept entity's gate
+        acc2["entities"] = ent2
+        acc2["accepted"] = all(ent2.get(e, {}).get("accepted", False) for e in keep) and not acc2["hands_failing_user_rules"]
         versions.set_accepted(a.run, mname, acc2["accepted"], {"compare": c2, **acc2})
         print(json.dumps({"version": mname, "entities": keep, **acc2, "compare": c2["summary"]}, indent=1))
         if acc2["accepted"]:
@@ -163,9 +171,58 @@ def cmd_export(a, cfg):
     final.run(a.run, cfg)
 
 
+def cmd_te_prepare(a, cfg):
+    """Stage 6.2 (TrackEverything backend), step 1 in agile: queries -> hoi4d/te_queries.npz."""
+    from .tracking import trackeverything
+    man = json.loads((hio.out_dir(a.run) / "scene_manifest.json").read_text())
+    tr, _ = load_version(a.run, "initial")
+    print(json.dumps(trackeverything.prepare(a.run, man, tr, cfg["trackeverything"]), indent=1))
+
+
+def cmd_track_compare(a, cfg):
+    """A/B of the two tracking backends on the same version: object rigid residual + hand-track displacement
+    agreement with the detected joints (offset-free, short windows)."""
+    from .tracking import cotracker
+    tr, _ = load_version(a.run, a.version or "initial")
+    res = {}
+    for name, f in (("cotracker", "tracks.npz"), ("trackeverything", "tracks_te.npz")):
+        p = hio.out_dir(a.run) / f
+        if not p.exists():
+            continue
+        tk = dict(np.load(p, allow_pickle=False))
+        ag = cotracker.agreement(tr, tk, run_name=a.run)
+        res[name] = {n: {"median_mm": float(np.nanmedian(d["rigid_resid_m"]) * 1000),
+                         "p95_mm": float(np.nanpercentile(d["rigid_resid_m"], 95) * 1000)} for n, d in ag.items()}
+        if "joint" in tk:  # hand joints: |d joint(t..t+k) - d track(t..t+k)| over visible pairs, k = 1, 5, 10
+            from .conventions import SOURCE_IDS
+            hs = {}
+            for h, hd in tr.hands.items():
+                if h not in list(tk["names"]):
+                    continue
+                k = list(tk["names"]).index(h)
+                sel = np.where((tk["owner"] == k) & (tk["joint"] >= 0))[0]
+                obs = hd["source"] == SOURCE_IDS["observed"]
+                for lag in (1, 5, 10):
+                    e = []
+                    for i in sel:
+                        j = tk["joint"][i]
+                        P, V = tk["P_world"][:, i], tk["vis"][:, i]
+                        t = np.arange(len(P) - lag)
+                        ok = V[t] & V[t + lag] & obs[t] & obs[t + lag]
+                        if ok.any():
+                            dj = hd["joints"][t[ok] + lag, j] - hd["joints"][t[ok], j]
+                            dp = P[t[ok] + lag] - P[t[ok]]
+                            e.append(np.linalg.norm(dj - dp, axis=1))
+                    e = np.concatenate(e) if e else np.array([np.nan])
+                    hs[f"{h}_lag{lag}"] = {"median_mm": float(np.nanmedian(e) * 1000), "p95_mm": float(np.nanpercentile(e, 95) * 1000), "n": int(np.isfinite(e).sum())}
+            res[name]["hands"] = hs
+    hio.write_json(hio.out_dir(a.run) / "track_compare.json", res)
+    print(json.dumps(res, indent=1))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["ingest", "track", "diagnose", "task", "review", "optimize", "refine", "export"])
+    ap.add_argument("cmd", choices=["ingest", "track", "te_prepare", "track_compare", "diagnose", "task", "review", "optimize", "refine", "export"])
     ap.add_argument("run")
     ap.add_argument("--version")
     ap.add_argument("--name")
@@ -174,6 +231,9 @@ def main():
     ap.add_argument("--config")
     a = ap.parse_args()
     cfg = load_cfg(a.config)
+    from .tracking import cotracker
+    cotracker.TRACKS_FILE = {"cotracker": "tracks.npz", "trackeverything": "tracks_te.npz"}[
+        os.environ.get("HOI4D_TRACKER", cfg.get("tracking", {}).get("backend", "cotracker"))]
     globals()[f"cmd_{a.cmd}"](a, cfg)
 
 
