@@ -83,13 +83,26 @@ def prepare(run_name: str, man: dict, tr, cfg: dict) -> dict:
         for f in range(0, F, cfg.get("hand_reseed", 5)):
             if hd["source"][f] != obs or not np.isfinite(T_wc[f]).all():
                 continue
-            mp = run / "objects_sam3/masks" / str(mid) / f"{f:06d}.png"
             dp = run / "depth_stereo" / f"{f:06d}.png"
-            if not (mp.exists() and dp.exists()):
+            if not dp.exists():
                 continue
-            m = np.asarray(Image.open(mp)) > 0
-            D = _decode_depth(np.asarray(Image.open(dp)))
             Jc = (hd["joints"][f] - T_wc[f][:3, 3]) @ T_wc[f][:3, :3]  # world -> camera a
+            # hand mask for THIS hand at this frame: SAM 3's left/right ids are not reliable (eval ep38 has them
+            # swapped for the whole clip), so take the hand mask (2 or 3) that contains most of the projected joints
+            best, m = -1, None
+            for cand in (2, 3):
+                mp = run / "objects_sam3/masks" / str(cand) / f"{f:06d}.png"
+                if not mp.exists():
+                    continue
+                mm = np.asarray(Image.open(mp)) > 0
+                uv = np.c_[K[0, 0] * Jc[:, 0] / Jc[:, 2] + K[0, 2], K[1, 1] * Jc[:, 1] / Jc[:, 2] + K[1, 2]].round().astype(int)
+                ok = (Jc[:, 2] > 0) & (uv[:, 0] >= 0) & (uv[:, 0] < W) & (uv[:, 1] >= 0) & (uv[:, 1] < H)
+                hits = int(mm[uv[ok, 1], uv[ok, 0]].sum())
+                if hits > best:
+                    best, m = hits, mm
+            if m is None or best < 3:
+                continue
+            D = _decode_depth(np.asarray(Image.open(dp)))
             for j, X in enumerate(Jc):
                 if not np.isfinite(X).all() or X[2] <= 0:
                     continue

@@ -453,6 +453,9 @@ def visual_scores(tb, before, after, window):
 def hand_checks(h0, h1, t):
     """User rulings for hands: observed (detected) frames stay at the observation; no added finger jitter."""
     obs = (h0["source"] == 1) & h0["valid"] & h1["valid"]
+    rep = h1.get("repaired")
+    if rep is not None:  # spin-repaired frames: the fit there was a flip contradicted by the hand tracks
+        obs &= ~rep.astype(bool)
     dev = np.linalg.norm(h1["joints"][obs] - h0["joints"][obs], axis=-1)
     dt2 = float(np.median(np.diff(t))) ** 2
 

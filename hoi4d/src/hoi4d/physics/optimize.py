@@ -201,16 +201,27 @@ def run(run_name, version, cfg, proposals, name=None, accept_registry=True, iter
     # ---------------- hands
     mano = load_mano() if tr.hands else None
     H = {}
+    spin_rep = {}
     for h, hd in tr.hands.items():
         valid = torch.tensor(hd["valid"], device=DEV)
-        H[h] = {"valid": valid, "is_right": h == "hand_right",
-                "go": torch.tensor(np.nan_to_num(hd["global_orient"]), dtype=torch.float32, device=DEV),
-                "hp": torch.tensor(np.nan_to_num(hd["hand_pose"]), dtype=torch.float32, device=DEV),
+        # fit flips (fast wrist rotation the hand's tracked surface points do not show): re-initialise those frames
+        # and let the optimizer solve them from tracks + smoothness instead of pinning them to the flipped fit
+        ht = hand_track_points(tracks, h)
+        rmask, rlog = spin_repair(hd, ht, 1.0 / float(np.median(np.diff(tr.t_s))))
+        go_np, hp_np, T_np = spin_reinit(hd, rmask) if rmask.any() else (hd["global_orient"], hd["hand_pose"], hd["transl"])
+        spin_rep[h] = {"repaired_frames": int(rmask.sum()), "suspect_pairs": rlog[:40], "track_points": 0 if ht is None else len(ht["joint"])}
+        H[h] = {"valid": valid, "is_right": h == "hand_right", "repaired": rmask,
+                "go": torch.tensor(np.nan_to_num(go_np), dtype=torch.float32, device=DEV),
+                "hp": torch.tensor(np.nan_to_num(hp_np), dtype=torch.float32, device=DEV),
                 "betas": torch.tensor(hd["betas"], dtype=torch.float32, device=DEV)[None],
-                "T": torch.tensor(np.nan_to_num(hd["transl"]), dtype=torch.float32, device=DEV),
-                "obs": torch.tensor(hd["source"] == C.SOURCE_IDS["observed"], device=DEV),
+                "T": torch.tensor(np.nan_to_num(T_np), dtype=torch.float32, device=DEV),
+                "obs": torch.tensor((hd["source"] == C.SOURCE_IDS["observed"]) & ~rmask, device=DEV),
                 "dR": torch.zeros(B.shape[1], 6, device=DEV, requires_grad=True),
                 "dP": torch.zeros(B.shape[1], 45, device=DEV, requires_grad=True)}
+        if ht is not None:  # TrackEverything hand-joint tracks (offset-free short-window displacement term)
+            H[h]["tP"] = torch.tensor(np.nan_to_num(ht["P"]), dtype=torch.float32, device=DEV)
+            H[h]["tV"] = torch.tensor(ht["V"], device=DEV)
+            H[h]["tJ"] = torch.tensor(ht["joint"], device=DEV)
         with torch.no_grad():
             v, j = hand_forward(mano, H[h]["go"], H[h]["hp"], H[h]["betas"], H[h]["T"], H[h]["is_right"])
             H[h]["J0w"] = torch.einsum("fij,fpj->fpi", T_wc[:, :3, :3], j) + T_wc[:, None, :3, 3]
@@ -327,11 +338,33 @@ def run(run_name, version, cfg, proposals, name=None, accept_registry=True, iter
             okh = d["valid"]
             L["visual"] = L["visual"] + (huber((jw - d["J0w"]).norm(dim=-1), 0.005) * (d["obs"] & okh)[:, None]).sum() \
                 / ((d["obs"] & okh).sum() * 21).clamp(min=1) / 0.005
+            # anatomy / temporal over VALID frames only (invalid frames hold a zero placeholder at the camera origin)
+            vf = okh.float()
             ang = (d["hp"] + dp).view(F, 15, 3).norm(dim=-1)
-            L["anatomy"] = L["anatomy"] + (torch.relu(ang - 2.0) ** 2).sum(-1).mean() + finger_pen(jw).mean() / 0.002
+            L["anatomy"] = L["anatomy"] + ((torch.relu(ang - 2.0) ** 2).sum(-1) * vf).sum() / vf.sum().clamp(min=1) \
+                + (finger_pen(jw) * vf).sum() / vf.sum().clamp(min=1) / 0.002
             w = jw[:, 0]
             acc = (w[2:] - 2 * w[1:-1] + w[:-2]) / ((t[2:] - t[:-2]) / 2)[:, None] ** 2
-            L["temporal"] = L["temporal"] + huber(acc.norm(dim=-1), 5.0).mean() * 0.2
+            ok3 = (okh[2:] & okh[1:-1] & okh[:-2]).float()
+            L["temporal"] = L["temporal"] + (huber(acc.norm(dim=-1), 5.0) * ok3).sum() / ok3.sum().clamp(min=1) * 0.2
+            # wrist rotation speed (joint frame): soft cap at 8 rad/s -- no spinning hands
+            xa = jw[:, 5] - jw[:, 17]
+            xa = xa / xa.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+            za = torch.cross(xa, jw[:, 9] - jw[:, 0], dim=-1)
+            za = za / za.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+            Rh = torch.stack([xa, torch.cross(za, xa, dim=-1), za], -1)
+            cs = ((Rh[:-1] * Rh[1:]).sum((-1, -2)) - 1) / 2
+            spd = torch.acos(cs.clamp(-1 + 1e-6, 1 - 1e-6)) / (t[1:] - t[:-1])
+            ok2 = (okh[1:] & okh[:-1]).float()
+            L["temporal"] = L["temporal"] + ((torch.relu(spd - 8.0) ** 2) * ok2).sum() / ok2.sum().clamp(min=1) * 0.05
+            # TrackEverything hand tracks: each joint moves like its tracked surface point over 1-3 frames
+            # (offset-free: the joint-to-surface offset barely rotates within 3 frames; longer lags drift ~1 cm)
+            if "tP" in d:
+                jt = jw[:, d["tJ"]]  # (F, N, 3)
+                for lag in (1, 2, 3):
+                    okl = d["tV"][lag:] & d["tV"][:-lag] & (okh[lag:] & okh[:-lag])[:, None]
+                    res = ((jt[lag:] - jt[:-lag]) - (d["tP"][lag:] - d["tP"][:-lag])).norm(dim=-1)
+                    L["visual"] = L["visual"] + (huber(res, 0.003) * okl).sum() / okl.sum().clamp(min=1) / 0.003 * 0.3
             r = B @ (d["dR"] * knot_on)
             L["prior"] = L["prior"] + ((r[:, 3:] / 0.005) ** 2).sum(-1).mean() + ((r[:, :3] / np.deg2rad(3)) ** 2).sum(-1).mean() \
                 + ((dp / 0.1) ** 2).mean()
@@ -412,7 +445,7 @@ def run(run_name, version, cfg, proposals, name=None, accept_registry=True, iter
             L, _, _ = terms(stage)
         return {k: float(v) for k, v in L.items()}
 
-    rep = {"before": report("physical")}
+    rep = {"before": report("physical"), "spin_repair": spin_rep}
     solve("geometric", iters[0])
     rep["after_geometric"] = report("geometric")
     # stage 2: contact selection -- keep a hypothesised grasp only if the geometric solution supports it
@@ -470,6 +503,8 @@ def run(run_name, version, cfg, proposals, name=None, accept_registry=True, iter
         hd["source"][moved & vmask] = C.SOURCE_IDS["refined"]
         # transl / global_orient in the camera frame: rigid world correction folded into the camera-frame params
         hd["transl"][vmask], hd["global_orient"][vmask] = fold_rigid(H[h], HWn[h], T_wc, mano, vmask)
+        hd["repaired"] = H[h]["repaired"].copy()  # spin-repaired frames (excluded from the observed-frame 1 cm gate)
+        hd["source"][H[h]["repaired"] & vmask] = C.SOURCE_IDS["refined"]
     name = name or f"phys_{len(reg)}"
     change = {"stage": "optimize", "proposals": proposals, "weights": W, "report": rep}
     versions.write_variant(run_name, name, new, version, change, reg[version]["hands_variant"])
@@ -539,3 +574,102 @@ def fold_rigid(Hd, HWn, T_wc, mano, vmask):
     jc = np.einsum("fij,fpj->fpi", np.linalg.inv(Twc)[:, :3, :3], jn) + np.linalg.inv(Twc)[:, None, :3, 3]
     T = jc[:, 0] - j.cpu().numpy()[:, 0]
     return T[vmask], go[vmask]
+
+
+def _hand_frame(J):
+    """Wrist frame from joints (OpenPose order: 0 wrist, 5 index MCP, 9 middle MCP, 17 pinky MCP); (..., 3, 3)."""
+    x = J[..., 5, :] - J[..., 17, :]
+    x = x / np.linalg.norm(x, axis=-1, keepdims=True)
+    z = np.cross(x, J[..., 9, :] - J[..., 0, :])
+    z = z / np.linalg.norm(z, axis=-1, keepdims=True)
+    return np.stack([x, np.cross(z, x), z], -1)
+
+
+def hand_track_points(tracks, h):
+    """TrackEverything hand-joint tracks of one hand (tracks_te.npz has 'joint'; CoTracker files do not)."""
+    if tracks is None or "joint" not in tracks or h not in [str(x) for x in tracks["names"]]:
+        return None
+    k = [str(x) for x in tracks["names"]].index(h)
+    idx = np.where((tracks["owner"] == k) & (tracks["joint"] >= 0))[0]
+    if len(idx) == 0:
+        return None
+    P = tracks["P_world"][:, idx].astype(float)
+    V = tracks["vis"][:, idx] & np.isfinite(P).all(-1)
+    return {"P": P, "V": V, "joint": tracks["joint"][idx].astype(int)}
+
+
+def spin_repair(hd, ht, fps, fast=10.0, ratio=0.5, untracked_fast=20.0, merge_gap=8):
+    """Frames where the fitted wrist turns fast but the hand's tracked surface points do not (fit flips).
+
+    Pair (t, t+1) is suspect if the joint-frame rotation speed exceeds `fast` rad/s and the rotation implied by the
+    TrackEverything hand points (Kabsch over >= 4 points visible in both frames) is below `ratio` of it; without
+    track support only speeds above `untracked_fast` are suspect. Suspect pairs closer than `merge_gap` frames form
+    one burst; bursts are dilated by one frame. Returns (mask, report). The masked frames are re-initialised by the
+    caller (rotation slerp between the clean frames on either side: a starting point only) and then solved by the
+    optimizer from tracks + smoothness instead of being pinned to the flipped fit."""
+    from scipy.spatial.transform import Rotation as Rot
+    J, valid = hd["joints"], hd["valid"] & np.isfinite(hd["joints"]).all((1, 2))
+    F = len(J)
+    R = np.full((F, 3, 3), np.nan)
+    R[valid] = _hand_frame(J[valid])
+    sus, rep = [], []
+    for t in range(F - 1):
+        if not (valid[t] and valid[t + 1]):
+            continue
+        s = np.linalg.norm(Rot.from_matrix(R[t].T @ R[t + 1]).as_rotvec()) * fps
+        if s <= fast:
+            continue
+        a = np.nan
+        if ht is not None:
+            m = ht["V"][t] & ht["V"][t + 1]
+            if m.sum() >= 4:
+                A = ht["P"][t, m] - ht["P"][t, m].mean(0)
+                B_ = ht["P"][t + 1, m] - ht["P"][t + 1, m].mean(0)
+                U, _, Vt = np.linalg.svd(B_.T @ A)
+                Rk = U @ np.diag([1, 1, np.sign(np.linalg.det(U @ Vt))]) @ Vt
+                a = np.linalg.norm(Rot.from_matrix(Rk).as_rotvec()) * fps
+        if (np.isfinite(a) and a < ratio * s) or (not np.isfinite(a) and s > untracked_fast):
+            sus.append(t)
+            rep.append({"frame": t, "fit_rad_s": round(float(s), 1), "track_rad_s": None if not np.isfinite(a) else round(float(a), 1)})
+    mask = np.zeros(F, bool)
+    if sus:
+        segs = [[sus[0], sus[0] + 1]]
+        for t in sus[1:]:
+            if t - segs[-1][1] <= merge_gap:
+                segs[-1][1] = t + 1
+            else:
+                segs.append([t, t + 1])
+        for a, b in segs:
+            mask[max(0, a - 1): min(F, b + 2)] = True
+    return mask & valid, rep
+
+
+def spin_reinit(hd, mask):
+    """Starting point for repaired frames: slerp of global_orient / per-joint hand_pose and lerp of transl between
+    the nearest clean valid frames (one-sided: the clean neighbour). Returns new (go, hp, T) arrays."""
+    from scipy.spatial.transform import Rotation as Rot, Slerp
+    go, hp, T = hd["global_orient"].copy(), hd["hand_pose"].copy(), hd["transl"].copy()
+    clean = hd["valid"] & ~mask
+    F = len(go)
+    f = 0
+    while f < F:
+        if not mask[f]:
+            f += 1
+            continue
+        e = f
+        while e + 1 < F and mask[e + 1]:
+            e += 1
+        a = max([i for i in range(0, f) if clean[i]], default=None)
+        b = min([i for i in range(e + 1, F) if clean[i]], default=None)
+        for g in range(f, e + 1):
+            if a is not None and b is not None:
+                u = (g - a) / (b - a)
+                go[g] = Slerp([0, 1], Rot.from_rotvec([go[a], go[b]]))(u).as_rotvec()
+                hp[g] = np.concatenate([Slerp([0, 1], Rot.from_rotvec([hp[a, 3*k:3*k+3], hp[b, 3*k:3*k+3]]))(u).as_rotvec()
+                                        for k in range(15)])
+                T[g] = (1 - u) * T[a] + u * T[b]
+            elif a is not None or b is not None:
+                c = a if a is not None else b
+                go[g], hp[g], T[g] = go[c], hp[c], T[c]
+        f = e + 1
+    return go, hp, T

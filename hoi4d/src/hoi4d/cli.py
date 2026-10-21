@@ -123,6 +123,10 @@ def cmd_refine(a, cfg):
     tb = Toolbox(a.run, cfg)
     if a.version:  # refine from an explicit version (A/B runs), not the registry's current one
         tb.current = a.version
+    # rest consistency first (deterministic, evidence-gated): wrong rest poses that snap at first contact
+    tb.current, _rest = apply_rest_fix(a.run, tb.current, cfg)
+    # hand spin repair (local, TrackEverything evidence), before the whole-sequence solve
+    tb.current, _spin = apply_spin_fix(a.run, tb.current, cfg)
     cur = tb.current
     name = a.name or f"phys_global_{len(versions.load(a.run))}"
     po.run(a.run, cur, cfg, [], name)
@@ -220,9 +224,96 @@ def cmd_track_compare(a, cfg):
     print(json.dumps(res, indent=1))
 
 
+def apply_rest_fix(run, cur, cfg, name=None):
+    """Rest consistency (an untouched object cannot move): fix wrong rest poses revealed by a jump at the hand's
+    first contact / release. Evidence-gated per jump (physics/rest_consistency.py). Returns the version to continue
+    from (a new accepted version if anything changed, else cur) and the report."""
+    from .export import versions
+    from .physics import rest_consistency as rc
+    man = json.loads((hio.out_dir(run) / "scene_manifest.json").read_text())
+    tr, _ = load_version(run, cur)
+    new, rep = rc.repair(run, man, tr, cfg.get("rest_consistency"))
+    hio.write_json(hio.out_dir(run) / f"rest_fix_{cur}.json", rep)
+    if not any(r["applied"] for r in rep):
+        return cur, rep
+    name = name or f"rest_{len(versions.load(run))}"
+    versions.write_variant(run, name, new, cur, {"stage": "rest_consistency", "jumps": rep},
+                           versions.load(run)[cur]["hands_variant"])
+    versions.set_accepted(run, name, True, {"rule": "rest frames explained >= 20% better by the held stable-side pose",
+                                            "jumps": rep})
+    return name, rep
+
+
+def cmd_rest_fix(a, cfg):
+    cur = a.version or json.loads((hio.out_dir(a.run) / "versions.json").read_text()).get("_current", "initial")
+    v, rep = apply_rest_fix(a.run, cur, cfg, a.name)
+    print(json.dumps({"from": cur, "version": v, "jumps": rep}, indent=1, default=float))
+
+
+def apply_spin_fix(run, cur, cfg, name=None):
+    """Hand spin repair as its own LOCAL step: fit flips (fast wrist turns the TrackEverything hand points do not
+    show) are re-solved with optimizer knots only around each burst; only the repaired hands are taken over, every
+    other frame stays as detected. Accepted per hand if the user's hand rules hold (detected frames outside the
+    repair within 1 cm p95, no added fingertip jitter) and the repaired frames no longer spin (< 10 rad/s)."""
+    from .agents.tools import hand_checks
+    from .export import versions
+    from .physics import optimize as po
+    from .tracking import cotracker
+    tr, _ = load_version(run, cur)
+    tracks = cotracker.load_tracks(run)
+    fps = 1.0 / float(np.median(np.diff(tr.t_s)))
+    props, masks = [], {}
+    for h, hd in tr.hands.items():
+        m, _ = po.spin_repair(hd, po.hand_track_points(tracks, h), fps)
+        masks[h] = m
+        f = 0
+        while f < tr.F:
+            if m[f]:
+                e = f
+                while e + 1 < tr.F and m[e + 1]:
+                    e += 1
+                props.append({"frames": [f, e], "constraints": [], "evidence": f"{h} spin repair"})
+                f = e + 1
+            else:
+                f += 1
+    if not props:
+        return cur, {"repaired": {}}
+    base = name or f"spin_{len(versions.load(run))}"
+    trial = po.run(run, cur, cfg, props, base + "_trial", accept_registry=False)
+    new = hio.Trajectories.load(hio.out_dir(run) / f"trajectories_{trial}.npz")
+    merged, rep = tr.copy(), {"repaired": {}, "windows": [p["frames"] for p in props]}
+    for h, m in masks.items():
+        if not m.any():
+            continue
+        chk = hand_checks(tr.hands[h], new.hands[h], tr.t_s)
+        R = po._hand_frame(np.nan_to_num(new.hands[h]["joints"]))
+        from scipy.spatial.transform import Rotation as Rot
+        idx = [f for f in np.where(m)[0] if f + 1 < tr.F and new.hands[h]["valid"][f] and new.hands[h]["valid"][f + 1]]
+        sp = [np.linalg.norm(Rot.from_matrix(R[f].T @ R[f + 1]).as_rotvec()) * fps for f in idx]
+        ok = chk["observed_joint_dev_p95_m"] <= cfg["acceptance"].get("hand_obs_dev_p95_m", 0.01) \
+            and chk["finger_rel_acc_p95"][1] <= chk["finger_rel_acc_p95"][0] * (1 + cfg["acceptance"].get("hand_jitter_tol", 0.05)) \
+            and (max(sp) if sp else 0) < 10.0
+        rep["repaired"][h] = {"frames": int(m.sum()), "accepted": bool(ok), **chk,
+                              "max_wrist_speed_after_rad_s": float(max(sp)) if sp else None}
+        if ok:
+            merged.hands[h] = {k: v.copy() for k, v in new.hands[h].items()}
+    versions.reject_cleanup(run, trial)
+    if not any(d["accepted"] for d in rep["repaired"].values()):
+        return cur, rep
+    versions.write_variant(run, base, merged, cur, {"stage": "hand_spin_repair", **rep}, versions.load(run)[cur]["hands_variant"])
+    versions.set_accepted(run, base, True, {"rule": "hand rules + no spin in repaired frames", **rep})
+    return base, rep
+
+
+def cmd_spin_fix(a, cfg):
+    cur = a.version or json.loads((hio.out_dir(a.run) / "versions.json").read_text()).get("_current", "initial")
+    v, rep = apply_spin_fix(a.run, cur, cfg, a.name)
+    print(json.dumps({"from": cur, "version": v, **rep}, indent=1, default=float))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["ingest", "track", "te_prepare", "track_compare", "diagnose", "task", "review", "optimize", "refine", "export"])
+    ap.add_argument("cmd", choices=["ingest", "track", "te_prepare", "track_compare", "rest_fix", "spin_fix", "diagnose", "task", "review", "optimize", "refine", "export"])
     ap.add_argument("run")
     ap.add_argument("--version")
     ap.add_argument("--name")
