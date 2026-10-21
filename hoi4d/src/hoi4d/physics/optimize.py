@@ -338,8 +338,18 @@ def run(run_name, version, cfg, proposals, name=None, accept_registry=True, iter
             okh = d["valid"]
             L["visual"] = L["visual"] + (huber((jw - d["J0w"]).norm(dim=-1), 0.005) * (d["obs"] & okh)[:, None]).sum() \
                 / ((d["obs"] & okh).sum() * 21).clamp(min=1) / 0.005
+            # user rule inside the solve: detected joints may move freely within a 7 mm band, steeply penalised beyond
+            # (the acceptance gate requires p95 <= 1 cm; without the band collision/track terms pulled hands 1-3 cm)
+            dev = (jw - d["J0w"]).norm(dim=-1)
+            ob = (d["obs"] & okh).float()[:, None]
+            L["visual"] = L["visual"] + ((torch.relu(dev - 0.007) / 0.001) ** 2 * ob).sum() / (ob.sum() * 21).clamp(min=1)
             # anatomy / temporal over VALID frames only (invalid frames hold a zero placeholder at the camera origin)
             vf = okh.float()
+            # no added finger jitter (user rule): fingertip-relative-to-wrist acceleration, Huber
+            rel = jw[:, [4, 8, 12, 16, 20]] - jw[:, :1]
+            facc = (rel[2:] - 2 * rel[1:-1] + rel[:-2]).norm(dim=-1) / ((t[2:] - t[:-2]) / 2)[:, None] ** 2
+            okf = (okh[2:] & okh[1:-1] & okh[:-2]).float()[:, None]
+            L["temporal"] = L["temporal"] + (huber(facc, 2.0) * okf).sum() / (okf.sum() * 5).clamp(min=1) * 0.2
             ang = (d["hp"] + dp).view(F, 15, 3).norm(dim=-1)
             L["anatomy"] = L["anatomy"] + ((torch.relu(ang - 2.0) ** 2).sum(-1) * vf).sum() / vf.sum().clamp(min=1) \
                 + (finger_pen(jw) * vf).sum() / vf.sum().clamp(min=1) / 0.002

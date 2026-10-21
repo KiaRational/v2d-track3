@@ -417,6 +417,9 @@ def compare(tb: Toolbox, before: str, after: str, window=None) -> dict:
             row["visual_error_prob"] = vis["per_object"][e]
         if e in tb.traj(before).hands:
             row.update(hand_checks(tb.traj(before).hands[e], tb.traj(after).hands[e], tb.traj(before).t_s))
+            tr0 = te_hand_resid(tb.traj(before).hands[e], tb.tracks, e)
+            if tr0 is not None:
+                row["te_track_resid_m"] = [tr0, te_hand_resid(tb.traj(after).hands[e], tb.tracks, e)]
         per[e] = row
     out["per_entity"] = per
     out["summary"] = {k: out[k] for k in ("severity_all", "severity_window", "cotracker_resid_all_m",
@@ -477,7 +480,13 @@ def accept_entities(c: dict, acc: dict) -> dict:
         ct_gain = (ct[0] - ct[1]) / max(ct[0], 1e-6) if ct and len(ct) == 2 else 0.0
         v = r.get("visual_error_prob")
         vdeg = None if not v or None in v else (v[1] - v[0]) / max(v[0], 1e-3)
-        if "finger_rel_acc_p95" in r:  # hands: own severity must drop or tracking improve without severity growing
+        if "finger_rel_acc_p95" in r and r.get("te_track_resid_m") and None not in r["te_track_resid_m"]:
+            # hands with TrackEverything tracks: the change must make the hand move more like its tracked surface
+            # points (>= hand_track_gain_min); the user rules (1 cm on detected frames, no added fingertip jitter)
+            # are applied below. The anomaly severity is not used (it does not measure smoothness or track agreement).
+            t0, t1 = r["te_track_resid_m"]
+            ok = t1 <= t0 * (1 - acc.get("hand_track_gain_min", 0.05))
+        elif "finger_rel_acc_p95" in r:  # hands without tracks: own severity must drop or tracking improve
             better = (s1 < s0 - 1e-6) or (ct_gain >= acc["min_improvement"] and s1 <= s0 + 1e-6)
             ok = better and (vdeg is None or vdeg <= acc["max_visual_degradation"])
         else:
@@ -491,7 +500,8 @@ def accept_entities(c: dict, acc: dict) -> dict:
             fa = r["finger_rel_acc_p95"]
             ok = ok and r["observed_joint_dev_p95_m"] <= acc.get("hand_obs_dev_p95_m", 0.01) \
                 and fa[1] <= fa[0] * (1 + acc.get("hand_jitter_tol", 0.05))
-        out[e] = {"accepted": bool(ok), "severity": r["severity"], "cotracker_gain": ct_gain, "visual_degradation": vdeg}
+        out[e] = {"accepted": bool(ok), "severity": r["severity"], "cotracker_gain": ct_gain, "visual_degradation": vdeg,
+                  **({"te_track_resid_m": r["te_track_resid_m"]} if "te_track_resid_m" in r else {})}
     return out
 
 
@@ -516,3 +526,21 @@ def accept(c: dict, acc: dict) -> dict:
             "global_severity_change": float(gall),
             "rule": f"window improvement >= {acc['min_improvement']}, visual degradation <= "
                     f"{acc['max_visual_degradation']}, global severity change <= {acc['max_global_degradation']}"}
+
+
+def te_hand_resid(hd, tracks, h, lags=(1, 2, 3)):
+    """Hand agreement with its TrackEverything surface tracks: mean |d joint - d track| over 1-3 frame windows
+    (offset-free: the joint-to-surface offset barely rotates within 3 frames). None without hand tracks."""
+    from ..physics.optimize import hand_track_points
+    ht = hand_track_points(tracks, h)
+    if ht is None:
+        return None
+    J = hd["joints"][:, ht["joint"]]  # (F, N, 3)
+    ok_h = hd["valid"] & np.isfinite(hd["joints"]).all((1, 2))
+    res = []
+    for lag in lags:
+        ok = ht["V"][lag:] & ht["V"][:-lag] & (ok_h[lag:] & ok_h[:-lag])[:, None]
+        d = np.linalg.norm((J[lag:] - J[:-lag]) - (ht["P"][lag:] - ht["P"][:-lag]), axis=-1)
+        res.append(d[ok])
+    r = np.concatenate(res) if res else np.array([])
+    return float(np.mean(r)) if r.size >= 50 else None

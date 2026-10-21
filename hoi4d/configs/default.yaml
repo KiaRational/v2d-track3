@@ -74,6 +74,7 @@ acceptance:                    # stage 10
   hand_jitter_tol: 0.05         # user ruling: no added finger jitter (p95 fingertip-relative acceleration)
   object_track_gain_min: 0.10   # objects: calibrated vs public mocap (beat1/calib_accept.py): tracking gain > 10%
   object_visual_degradation_max: 0.05  #   and image evidence degradation < 5%
+  hand_track_gain_min: 0.05      # hands: agreement with TrackEverything hand tracks must improve >= 5% (+ the two user rules)
 
 tracking:                      # stage 6.2 backend for every consumer (diagnostics, review tools, optimizer)
   backend: trackeverything     # calibrated vs public mocap (beat1/calib_accept.py): +0.80 vs +0.58 cm ADD-S under the object gate
