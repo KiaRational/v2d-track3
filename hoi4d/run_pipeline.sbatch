@@ -53,7 +53,7 @@ has diagnose && H diagnose --version initial
 if has task || has review; then start_vllm; fi
 has task && H task
 has review && H review
-has refine && H refine
+has refine && H refine ${REFINE_ARGS:-}
 if has validate; then
   CUR=$(jq -r '._current // "initial"' $OUT/versions.json)
   OV=$(jq -r --arg v $CUR '.[$v].objects_variant' $OUT/versions.json)

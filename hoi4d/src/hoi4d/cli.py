@@ -164,6 +164,9 @@ def cmd_refine(a, cfg):
             versions.reject_cleanup(a.run, mname)
     if not acc["accepted"]:
         versions.reject_cleanup(a.run, name)
+    reg_ = versions.load(a.run)  # the refine result is the current version even when nothing was accepted
+    reg_["_current"] = final       # (else a stale _current from earlier runs would survive a refine from --version)
+    versions.save(a.run, reg_)
     print("current version:", final)
     hio.append_jsonl(hio.out_dir(a.run) / "review_log.jsonl", {"event": "global_refine", "version": name,
                                                                  "parent": cur, **acc, "compare": c["summary"]})
