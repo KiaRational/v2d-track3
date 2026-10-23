@@ -6,7 +6,7 @@ scan fills the 1.8 cm slots (the scan's slot is narrow and ragged), so the two p
 their X and the simulator pushes them apart. The provided *_collision.glb keeps the slots through the same
 decomposition, and is in the same object frame as the visual mesh (checked: < 1 mm). The URDF is per object (not
 per sequence) and is rewritten on every convert, so this runs after it in run_convert.sbatch.
-Usage: python write_collision_mesh.py <clip_dir> [--objects wooden_piece_1,wooden_piece_2 | all] [--mesh_root R]
+Usage: python write_collision_mesh.py <clip_dir> [--objects all (default: every object with a provided mesh) | a,b] [--mesh_root R]
 """
 import argparse
 import json
@@ -22,7 +22,7 @@ from scipy.spatial import cKDTree
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("clip")
-    ap.add_argument("--objects", default="wooden_piece_1,wooden_piece_2")
+    ap.add_argument("--objects", default="all")  # every object the dataset ships a *_collision mesh for
     ap.add_argument("--mesh_root", default=os.path.join(os.environ.get("V2D_ROOT", "/scratch/kghasemz/v2d"),
                                                          "data/track_3/public/mesh"))
     ap.add_argument("--max_dist_mm", type=float, default=3.0, help="refuse if the meshes are not in one frame")

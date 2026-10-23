@@ -42,6 +42,6 @@ python scripts/retarget/run_retarget.py --dataset ego_recon --robot sharpa_wave 
 python scripts/reconstruct_support_surfaces.py --dataset ego_recon --sequence_pattern '$SEQ' || echo 'support surface step failed (continuing)'
 # our round table as the sim support surface (finite, so hands can go under the rim); after upstream's step
 python /home/kghasemz/v2d-vulcan/robot/write_table_support.py $CLIP '$SEQ' --zoff=$ZOFF
-python /home/kghasemz/v2d-vulcan/robot/write_collision_mesh.py $CLIP --objects=${V2D_PROVIDED_COLLISION:-wooden_piece_1,wooden_piece_2}
+python /home/kghasemz/v2d-vulcan/robot/write_collision_mesh.py $CLIP --objects=${V2D_PROVIDED_COLLISION:-all}
 find $HMD -name '*.parquet' | grep -i '$SEQ' | head
 "
