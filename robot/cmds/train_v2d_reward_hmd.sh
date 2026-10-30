@@ -28,7 +28,7 @@ echo "support=$SUP table overrides: ${TBL:-none}"
 # V2D: observed-hand mask (hand reward + wrist termination only where the human hand was seen); HAND_VALID=0 opts out
 HV=/scratch/kghasemz/v2d/robot/hand_valid/${SEQ}.json; CLIPNPZ=/scratch/kghasemz/v2d/robot/clips/${SEQ}/outputs/result/result.npz
 if [ "${HAND_VALID:-1}" = 1 ] && [ -f $CLIPNPZ ]; then mkdir -p $(dirname $HV); python /scratch/kghasemz/v2d/beat1/hand_valid.py $CLIPNPZ $HV && export V2D_HAND_VALID=$HV; fi
-python scripts/train_flash_sac.py experiment=sharpa_flash_sac_v2d "task.parquet='${P}'" reset.seed=42 \
+python scripts/train_flash_sac.py experiment=sharpa_flash_sac_v2d "task.parquet='${P}'" reset.seed=${SEED:-42} \
   curriculum=${CURR:-tracking_250m_v2d} scene.support=$SUP ${TBL} sim.njmax=1024 sim.nconmax=512 scene.world_count=2048 \
   logging.mode=offline logging.upload_checkpoints=false logging.run_name=${NAME} \
   ${EXTRA} output_dir=/scratch/kghasemz/v2d/robot/fc_out/${NAME}
