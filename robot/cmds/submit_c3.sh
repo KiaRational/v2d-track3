@@ -27,7 +27,7 @@ done
 a=$(HMDC=$HMDC HMDP=$HMDP sbatch --parsable --exclude=rack02-06 --dependency=afterany:$PREVC --job-name=${TAG}-phys $B1/phys_c.sbatch)
 p=$(sbatch --parsable --exclude=rack02-06 --dependency=afterok:$a --job-name=${TAG}-pq --export=ALL,HMD_SRC=$HMDC,HMD_DST=$HMDP \
     $B1/phys_pq.sbatch "${SEQS[@]}")
-f=$(APPTAINERENV_SRC=$HMDP APPTAINERENV_DST=$HMDF APPTAINERENV_SEQS=$(IFS=,; echo "${SEQS[*]}") sbatch --parsable --time=3:00:00 \
+f=$(APPTAINERENV_SHELL_MAP=${SHELL_MAP:-} APPTAINERENV_FINE_TH_MAP=${FINE_TH_MAP:-} APPTAINERENV_SRC=$HMDP APPTAINERENV_DST=$HMDF APPTAINERENV_SEQS=$(IFS=,; echo "${SEQS[*]}") sbatch --parsable --time=3:00:00 \
     --exclude=rack02-06 --dependency=afterok:$p --job-name=${TAG}-fine run_fc.sbatch $B1/fine_tree.sh)
 VL=$B1/${TAG}_vid.txt; : > $VL; TR=()
 for RUN in $(cat "$1"); do

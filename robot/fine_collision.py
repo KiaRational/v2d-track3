@@ -28,6 +28,11 @@ PROVIDED = Path("/scratch/kghasemz/v2d/data/track_3/public/mesh")
 CACHE = "/scratch/kghasemz/v2d/cache/coacd_fc"
 import os
 SHELL = float(os.environ.get("SHELL_MM", "0")) / 1000.0  # >0: walls-only collision (shell thickness ~ this)
+# Per-object collision (env SHELL_MAP, "name:mm,..."): walls only for CONTAINERS that must stay open, with their own
+# wall thickness (thin 4 mm walls let fingers tunnel into cups and made every object rock on the table); every other
+# object is decomposed SOLID. FINE_TH_MAP "name:th,...": finer decomposition (keeps the boards' assembly slots open).
+SHELL_MAP = {k: float(v) / 1000.0 for k, v in (x.split(":") for x in os.environ.get("SHELL_MAP", "").split(",") if x)}
+TH_MAP = {k: float(v) for k, v in (x.split(":") for x in os.environ.get("FINE_TH_MAP", "").split(",") if x)}
 
 
 def shell_of(mesh, t):
@@ -71,9 +76,11 @@ def main():
         if os.environ.get("V2D_PROVIDED_COLLISION", "all") == "none":   # compliant tree: never the provided mesh
             prov = Path("/nonexistent")
         mesh = trimesh.load(prov if prov.exists() else mp, force="mesh")
-        if SHELL > 0:  # walls only: a thin solid shell around the surface, so openings (pot mouth, rack slots) stay empty
-            mesh = shell_of(mesh, SHELL)
-        hulls = convex_decompose(np.asarray(mesh.vertices), np.asarray(mesh.faces), threshold=th, cache_dir=CACHE)
+        shell = SHELL_MAP.get(name, 0.0) if SHELL_MAP else SHELL
+        if shell > 0:  # walls only: a solid shell around the surface, so openings (pot mouth, rack slots) stay empty
+            mesh = shell_of(mesh, shell)
+        hulls = convex_decompose(np.asarray(mesh.vertices), np.asarray(mesh.faces), threshold=TH_MAP.get(name, th), cache_dir=CACHE)
+        print(f"{name}: {'walls %.0f mm' % (shell * 1000) if shell > 0 else 'solid'}, threshold {TH_MAP.get(name, th)}", flush=True)
         od = dp / "collision_parts" / name
         shutil.rmtree(od, ignore_errors=True); od.mkdir(parents=True)
         cols = []
