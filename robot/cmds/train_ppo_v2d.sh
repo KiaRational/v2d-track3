@@ -12,15 +12,15 @@ if [ ! -f /workspace/src/flash_chord/configs/experiment/sharpa_ppo_v2d.yaml ]; t
   echo "ERROR: /workspace is not the v2d-rewards worktree; submit with FC_SRC=/scratch/kghasemz/v2d/fc_src_rewards" >&2
   exit 2
 fi
-P=/scratch/kghasemz/v2d/robot/hmd/ego_recon/processed/sequence_id=${SEQ}/robot_name=sharpa_wave
+P=${HMD:-/scratch/kghasemz/v2d/robot/hmd}/ego_recon/processed/sequence_id=${SEQ}/robot_name=sharpa_wave
 export WANDB_MODE=offline WANDB_DIR=/scratch/kghasemz/v2d/robot/wandb
-SUP=true; [ -s /scratch/kghasemz/v2d/robot/hmd/ego_recon/reconstructed_stage/${SEQ}_support.usda ] && \
-  grep -qE "Cylinder|Cube" /scratch/kghasemz/v2d/robot/hmd/ego_recon/reconstructed_stage/${SEQ}_support.usda || SUP=false
+SUP=true; [ -s ${HMD:-/scratch/kghasemz/v2d/robot/hmd}/ego_recon/reconstructed_stage/${SEQ}_support.usda ] && \
+  grep -qE "Cylinder|Cube" ${HMD:-/scratch/kghasemz/v2d/robot/hmd}/ego_recon/reconstructed_stage/${SEQ}_support.usda || SUP=false
 # Our reconstructed table (write_table_support.py, prim "table"): the finite table replaces the infinite ground plane
 # at table height, and the hands collide with it (physical; fingers can still reach under the rim). TABLE=0 opts out.
 TBL=""; [ "${TABLE:-1}" = 0 ] && SUP=false  # ground plane + our table together launches objects (overlapping supports)
 if [ "$SUP" = true ] && [ "${TABLE:-1}" = 1 ] && \
-   grep -q '"table"' /scratch/kghasemz/v2d/robot/hmd/ego_recon/reconstructed_stage/${SEQ}_support.usda; then
+   grep -q '"table"' ${HMD:-/scratch/kghasemz/v2d/robot/hmd}/ego_recon/reconstructed_stage/${SEQ}_support.usda; then
   TBL="collision.ground=false collision.robot_support_collision=true"
 fi
 echo "support=$SUP table overrides: ${TBL:-none}"

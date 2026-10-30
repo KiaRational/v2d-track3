@@ -63,6 +63,8 @@ def load_T(p):
 
 
 MIRROR = np.array([1.0, -1.0, -1.0])  # left hands: mirrored-right params <-> native left (loader convention)
+HAND_FOLLOW_M = 0.08  # wrist to object surface: a hand this close follows the object's export displacement
+ASSEMBLY_OBJECTS = {"wooden_piece_1", "wooden_piece_2"}   # slotted pieces: assembly snap
 
 
 def gap_runs(valid):
@@ -281,7 +283,7 @@ def object_poses(run, variant, nm, n):
 def copy_mesh(nm, out, stem):
     """The scanned OBJ of nm as <out>/<stem>.obj with its material and textures renamed <stem>.mtl /
     <stem>_<texture>, so several objects (all scans use material.mtl + material_0.png) share one dir."""
-    mesh_dir = ROOT / "meshes_obj" / nm
+    mesh_dir = ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm
     lines = []
     for ln in (mesh_dir / f"{nm}.obj").read_text().splitlines():
         if ln.split()[:1] == ["mtllib"]:
@@ -306,7 +308,7 @@ def main():
     ap.add_argument("--objects_list", default="all",
                     help="'all' (every object of the episode, reference order) or a comma list; ignored with --object")
     ap.add_argument("--objects", default="fused_all_sam3")
-    ap.add_argument("--obj_dir", default="objects_sam3")
+    ap.add_argument("--obj_dir", default=os.environ.get("V2D_OBJ_DIR", "objects_sam3"))
     ap.add_argument("--hands", default="mano_fit_phys")
     ap.add_argument("--out", default=None)
     ap.add_argument("--max_gap_s", type=float, default=0.15,
@@ -385,10 +387,12 @@ def main():
     if tp.get("disk_fit", {}).get("ok") and "center" in tp and "radius" in tp:
         disk = {"center": (A[:3, :3] @ np.array(tp["center"], float) + A[:3, 3]).tolist(), "radius": tp["radius"]}
     settle_report, depen_report, frame0_min_z, o2w_all = {}, {}, [], []
+    o2w_orig, coms, vsub = [], [], []   # before hold/settle/lift/snap: the hands follow the object's world displacement
     w2c_all = np.linalg.inv(c2w.astype(np.float64))
     for i, o in enumerate(names):
-        verts, com = mesh_verts_com(ROOT / "meshes_obj" / o / f"{o}.obj")
+        verts, com = mesh_verts_com(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / o / f"{o}.obj")
         o2w_i = np.einsum("nij,njk->nik", c2w.astype(np.float64), poses[i][0].astype(np.float64))
+        o2w_orig.append(o2w_i.copy()); coms.append(np.asarray(com, float)); vsub.append(verts[:: max(1, len(verts) // 300)])
         if disk is not None and not a.no_depenetrate:  # static run drifting into the table -> valid neighbours
             o2w_i, depen_report[o] = hold_static(o2w_i, verts, com, disk, fps)
         if not a.no_rest_settle:
@@ -410,9 +414,17 @@ def main():
         frame0_min_z.append(float((verts @ o2w_i[0, :3, :3].T)[:, 2].min() + o2w_i[0, 2, 3]))
     # assembled objects (slotted wooden pieces) overlapping in the simulator's collision parts at the end: shift the
     # last-moved one (and, below, the hand holding it) into place; parts from collision_parts.py
-    snap_report, hand_shift = [], None
+    snap_report = []
     if multi and not a.no_depenetrate:
-        parts = [load_parts(ROOT / "robot/assets_extra/collision_parts" / f"{o}.npz") for o in names]
+        # provided collision meshes only when allowed; the compliant tree (V2D_PROVIDED_COLLISION=none) uses the
+        # CoACD parts of OUR meshes (collision_parts.py --visual -> collision_parts_<mesh dir>)
+        mdir = os.environ.get("V2D_MESH_DIR", "meshes_obj")
+        pdir = ROOT / "robot/assets_extra" / ("collision_parts" if os.environ.get("V2D_PROVIDED_COLLISION", "all") != "none"
+                                              and mdir == "meshes_obj" else f"collision_parts_{mdir}")
+        # only slotted assemblies (the wooden pieces) are snapped; every other pair is skipped (parts None), as
+        # before our meshes had parts for all objects -- running it on e.g. two cups took hours and has no purpose
+        parts = [load_parts(pdir / f"{o}.npz") if o in ASSEMBLY_OBJECTS else None for o in names]
+        print(f"assembly snap collision parts: {pdir}", flush=True)
         deltas, snap_report = snap_assembly(o2w_all, parts, fps)
         for r in snap_report:
             print(f"assembly snap {names[r['mover']]} (vs {names[sum(r['pair']) - r['mover']]}): overlap "
@@ -422,9 +434,8 @@ def main():
             if np.abs(dl).max() > 0:
                 o2w_all[i][:, :3, 3] += dl
                 poses[i] = (np.einsum("nij,njk->nik", w2c_all, o2w_all[i]).astype(np.float32), poses[i][1])
-                frame0_min_z[i] = float((mesh_verts_com(ROOT / "meshes_obj" / names[i] / f"{names[i]}.obj")[0]
+                frame0_min_z[i] = float((mesh_verts_com(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / names[i] / f"{names[i]}.obj")[0]
                                          @ o2w_all[i][0, :3, :3].T)[:, 2].min() + o2w_all[i][0, 2, 3])
-                hand_shift = (i, dl) if hand_shift is None else hand_shift
     # The loader puts the lowest frame-0 object point (all bodies) at z = ground_z_offset; passing this value
     # makes its shift zero, so the sim ground stays at our table top (run_convert.sbatch reads it).
     loader_ground_z_offset = min(frame0_min_z)
@@ -454,18 +465,28 @@ def main():
         if a.no_gap_fill and not counts["no_observations"] and filled.any():
             raise ValueError(f"--no_gap_fill: {side} hand has {int(filled.sum())} frames missing from {a.hands} "
                              f"({counts}); fill them in the hand stage, not by export interpolation/hold")
-        if hand_shift is not None:  # the hand holding the snapped object moves with it (same world shift)
-            k, dl = hand_shift
-            win = (np.abs(dl).max(1) > 0) & ok
-            wrist_w = np.einsum("nij,nj->ni", c2w[:, :3, :3].astype(np.float64), w2c[:, :3, 3]) + c2w[:, :3, 3]
-            dist = np.linalg.norm(wrist_w[win] - o2w_all[k][win, :3, 3], axis=1) if win.any() else np.array([np.inf])
-            counts["assembly_snap_shift"] = bool(np.median(dist) < 0.15)
-            if counts["assembly_snap_shift"]:
-                d_cam = np.einsum("nji,nj->ni", c2w[:, :3, :3].astype(np.float64), dl)  # R_c2w^T dl
-                tr = (tr + np.where(ok[:, None], d_cam, 0.0)).astype(np.float32)
-                w2c[:, :3, 3] = tr
-                print(f"assembly snap: {side} hand (median wrist distance {np.median(dist) * 100:.1f} cm) shifted "
-                      "with the object", flush=True)
+        # A hand at an object follows that object's export displacement (hold_static / settle / lift / assembly snap):
+        # moving the object alone left grasping hands 2-6 cm off it. Per frame, the nearest object whose centre
+        # (original pose) has its surface within HAND_FOLLOW_M of the wrist and that moved by 1 mm .. 6 cm; translation only.
+        wrist_w = np.einsum("nij,nj->ni", c2w[:, :3, :3].astype(np.float64), w2c[:, :3, 3]) + c2w[:, :3, 3]
+        shift, best = np.zeros((n, 3)), np.full(n, np.inf)
+        for k in range(len(names)):
+            c0 = np.einsum("nij,j->ni", o2w_orig[k][:, :3, :3], coms[k]) + o2w_orig[k][:, :3, 3]
+            c1 = np.einsum("nij,j->ni", o2w_all[k][:, :3, :3], coms[k]) + o2w_all[k][:, :3, 3]
+            surf = np.einsum("nij,pj->npi", o2w_orig[k][:, :3, :3], vsub[k]) + o2w_orig[k][:, None, :3, 3]
+            dk, dist = c1 - c0, np.linalg.norm(surf - wrist_w[:, None], axis=2).min(1)   # wrist to object SURFACE
+            mag = np.linalg.norm(dk, axis=1)
+            sel = ok & (dist < HAND_FOLLOW_M) & (mag > 1e-3) & (mag < 0.06) & (dist < best)
+            shift[sel], best[sel] = dk[sel], dist[sel]
+        moved = np.linalg.norm(shift, axis=1) > 0
+        counts["follow_object_frames"] = int(moved.sum())
+        counts["follow_object_shift_mm_max"] = round(float(np.linalg.norm(shift, axis=1).max()) * 1000, 1)
+        if moved.any():
+            d_cam = np.einsum("nji,nj->ni", c2w[:, :3, :3].astype(np.float64), shift)  # R_c2w^T d
+            tr = (tr + d_cam).astype(np.float32)
+            w2c[:, :3, 3] = tr
+            print(f"hand follow: {side} hand shifted with its object on {int(moved.sum())} frames "
+                  f"(max {counts['follow_object_shift_mm_max']} mm)", flush=True)
         arr.update({f"hand_{side}_betas": b, f"hand_{side}_wrist_orient_in_camera": o,
                     f"hand_{side}_wrist_trans_in_camera": tr, f"hand_{side}_wrist_to_camera_transform": w2c,
                     f"hand_{side}_wrist_to_world_transform": np.einsum("nij,njk->nik", c2w, w2c),
@@ -479,8 +500,7 @@ def main():
                   file=sys.stderr, flush=True)
     np.savez(out / "result.npz", **arr)
     # mesh: the scanned OBJ with its material and textures
-    src = ROOT / "data/track_3/public/mesh" / nm
-    mesh_dir = ROOT / "meshes_obj" / nm
+    mesh_dir = ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm
     shutil.copy(mesh_dir / f"{nm}.obj", out / "mesh.obj")
     for f in mesh_dir.iterdir():
         if f.suffix.lower() in (".mtl", ".png", ".jpg", ".jpeg"):
@@ -509,7 +529,7 @@ def main():
                 "gravity_alignment": {"method": "stereo_table_plane", "up_in_slam_world": up.tolist(),
                                       "table_height": tp["height"], "transform": A.tolist()},
                 "sources": {"run": a.run, "object": nm, "objects_variant": a.objects, "hands": a.hands,
-                            "object_transform_convention": "rigid_pose_no_scale", "mesh_source": str(src)},
+                            "object_transform_convention": "rigid_pose_no_scale", "mesh_source": str(mesh_dir)},
                 "keys": sorted(arr)}
     if multi:
         manifest["sources"]["object"] = "__".join(names)
@@ -517,7 +537,7 @@ def main():
                                     "convention": "slot i = metric object slot i = loader body i"}
         manifest["objects"] = [{"slot": i, "name": o, "mesh": f"mesh_{i}.obj", "key_prefix": f"object_{i}_",
                                 "valid_frames": int(poses[i][1].sum()),
-                                "mesh_source": str(ROOT / "data/track_3/public/mesh" / o)}
+                                "mesh_source": str(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / o)}
                                for i, o in enumerate(names)]
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
     valid = [int(p[1].sum()) for p in poses] if multi else obj_ok.sum()

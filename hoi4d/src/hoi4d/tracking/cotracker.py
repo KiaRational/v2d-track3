@@ -33,7 +33,7 @@ def seeds(run, man, F, per_entity, reseed_every, rng):
         for f in range(0, F, reseed_every):
             # nearest frame with a usable mask at/after f
             for g in range(f, min(F, f + reseed_every)):
-                p = run / "objects_sam3/masks" / str(e["mask_id"]) / f"{g:06d}.png"
+                p = run / hio.obj_dir() / "masks" / str(e["mask_id"]) / f"{g:06d}.png"
                 if not p.exists():
                     continue
                 m = np.asarray(Image.open(p)) > 0

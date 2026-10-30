@@ -392,8 +392,15 @@ class Joint:
                 RGs = HR.transpose(-1, -2) @ f["R"][g["ft"]]
                 tGs = torch.einsum("fji,fj->fi", HR, f["p"][g["ft"]] - Hp)
                 wi = e["rot_trust"][g["ft"]] + 0.05  # G from the frames where the object is clearly seen
-                g["RG0"] = chordal_mean_t(RGs, wi)
-                g["tG0"] = (wi[:, None] * tGs).sum(0) / wi.sum()
+                # A chordal mean of opposite FP branches can seed a 90-degree
+                # grasp error that bounded optimization cannot subsequently undo.
+                from evidence_fusion import robust_pose
+                relative = np.tile(np.eye(4), (L, 1, 1))
+                relative[:, :3, :3] = RGs.cpu().numpy()
+                relative[:, :3, 3] = tGs.cpu().numpy()
+                seed = robust_pose(relative, wi.cpu().numpy())
+                g["RG0"] = torch.tensor(seed[:3, :3], **self.f32)
+                g["tG0"] = torch.tensor(seed[:3, 3], **self.f32)
                 for k, shape in (("gR", (3,)), ("gT", (3,)), ("sR", (L, 3)), ("sT", (L, 3))):
                     g[k] = torch.zeros(shape, **self.f32).requires_grad_(True)
         # spline phases: per object/frame the coupled sides, per hand/frame the coupled objects
@@ -616,6 +623,8 @@ def build_parser():
     ap.add_argument("--ref_hands", default="mano_fit", help="data term, prior, trust limits and anchors are measured from these")
     ap.add_argument("--segment_params", default="mano_fit_selected", help="s06i dir: per-grasp squeeze/contact (if present)")
     ap.add_argument("--init_objects", default="fused_all_sam3", help="object track the corrections start from")
+    ap.add_argument("--evidence_variant", default=None,
+                    help="Use validated masked-depth observations and carry segments from evidence_fusion")
     ap.add_argument("--variant", default="fused_joint", help="OUTPUT object variant (report args.variant)")
     ap.add_argument("--out", default="mano_fit_joint", help="OUTPUT hands dir under stereo/")
     ap.add_argument("--obj_dir", default="objects_sam3")
@@ -639,6 +648,9 @@ def build_parser():
     ap.add_argument("--max_slip_deg", type=float, default=8.0)
     # grasp phases
     ap.add_argument("--redetect", choices=("off", "refine", "union"), default="refine")
+    ap.add_argument("--comotion", type=int, default=1, help="1: add co-motion / airborne grasps (comotion_grasps) to the report contact")
+    ap.add_argument("--comotion_near_mm", type=float, default=100.0)
+    ap.add_argument("--comotion_hands", default="hands_c", help="stereo/<dir> hands for the co-motion test (joints)")
     ap.add_argument("--carry", type=int, default=0, help="1: couple only on carried frames (fusion_report hand_carry) and use "
                     "colour-time (retimed) stereo-ICP; 0: legacy (whole contact, raw ICP time)")
     ap.add_argument("--enter_mm", type=float, default=8.0)
@@ -700,12 +712,89 @@ def build_parser():
 
 
 # ---------------------------------------------------------------- I/O
+def comotion_grasps(W0, verts, hands_st, slam, n, plane, a):
+    """Grasps the contact detector misses (e03 pot: hand 6-7 cm from our pot surface for 160 airborne frames -- a
+    hand/object offset, not a release). A hand holds the object at t when it is within --comotion_near_mm of the
+    object surface AND either the object is AIRBORNE and moving (lowest point > 2 cm above the tabletop and its
+    centre travels > 2 cm within +-10 frames: a lid resting on a still pot is not carried) or it CO-MOVES with the
+    hand (object speed > 4 mm/frame and the palm velocity within 50 % of it, +-3-frame means). Both hands within
+    3 cm -> both; else the nearer. Gaps <= 5 frames filled, runs < 4 frames dropped. Returns {side: [frames]}."""
+    from fuse_objects import PALM, stereo_hands
+    from scipy.spatial import cKDTree
+    hands = stereo_hands(run_of(a), n, a.comotion_hands) or hands_st
+    V = verts[:: max(1, len(verts) // 1500)]
+    ok = np.isfinite(W0[:, 0, 0])
+    X = {t: V @ W0[t, :3, :3].T + W0[t, :3, 3] for t in range(n) if ok[t]}
+    c = np.array([X[t].mean(0) if ok[t] else np.full(3, np.nan) for t in range(n)])
+    low = np.full(n, np.nan)
+    if plane is not None:
+        up, h = np.asarray(plane["up"], float), float(plane["height"])
+        for t in X:
+            low[t] = (X[t] @ up).min() - h
+    travel = np.array([np.nanmax(np.linalg.norm(c[max(0, t - 10):t + 11] - c[t], axis=1)) if ok[t] else 0.0 for t in range(n)])
+    airborne = (np.nan_to_num(low) > 0.02) & (travel > 0.02)
+
+    def vel(P):
+        v = np.full_like(P, np.nan)
+        v[1:-1] = (P[2:] - P[:-2]) / 2
+        out = np.full_like(P, np.nan)
+        for t in range(n):
+            s = v[max(0, t - 3):t + 4]
+            s = s[np.isfinite(s[:, 0])]
+            if len(s):
+                out[t] = s.mean(0)
+        return out
+    vo = vel(c)
+    dist, comove = {}, {}
+    for sd, hd in hands.items():
+        d = np.full(n, np.inf)
+        palm = np.full((n, 3), np.nan)
+        for t in X:
+            if np.isfinite(hd["J"][t]).all():
+                Jw = hd["J"][t] @ slam[t][:3, :3].T + slam[t][:3, 3]
+                d[t] = cKDTree(X[t]).query(Jw)[0].min()
+                palm[t] = Jw[PALM].mean(0)
+        vh = vel(palm)
+        so = np.linalg.norm(vo, axis=1)
+        comove[sd] = np.nan_to_num((so > 0.004) & (np.linalg.norm(vo - vh, axis=1) < 0.5 * so)).astype(bool)
+        dist[sd] = d
+    out = {}
+    for sd in dist:
+        other = [o for o in dist if o != sd]
+        g = (dist[sd] < a.comotion_near_mm / 1000) & (airborne | comove[sd])
+        for o in other:   # the nearer hand holds it, unless both are on it
+            g &= (dist[sd] <= dist[o]) | (dist[sd] < 0.03)
+        idx = np.nonzero(g)[0]
+        for t0, t1 in zip(idx, idx[1:]):
+            if 1 < t1 - t0 <= 6:
+                g[t0:t1] = True
+        keep = np.zeros(n, bool)
+        for r in runs_of(g):
+            if len(r) >= 4:
+                keep[r] = True
+        out[sd] = np.nonzero(keep)[0].tolist()
+    return out
+
+
+def run_of(a):
+    return ROOT / "runs" / a.run
+
+
 def load_objects(run, a, slam, n, fps, plane, dev, rep):
     """Measurements exactly as fuse_objects main (FP poses_smoothed vis-weighted + gated stereo-ICP),
     canonicalised; damping weights from its cached contact/visibility; the init track in the world."""
     from fuse_objects import canon_measurements, damping_weights, grasp_segments, retime, stereo_hands
     from symmetry import mesh_symmetry
     hands_st = stereo_hands(run, n)
+    evidence = None
+    if a.evidence_variant:
+        import hashlib
+        evidence = json.loads((run / a.evidence_variant / "evidence_report.json").read_text())
+        if (not evidence.get("complete") or evidence.get("mesh_root") != "meshes_recon"
+                or a.obj_dir != "objects_recon"
+                or os.environ.get("V2D_MESH_DIR") != "meshes_recon"
+                or abs(evidence["fps"] - fps) > 1e-6):
+            raise ValueError("Evidence must be complete and match reconstructed meshes, objects and timing")
     objs = []
     for o in json.loads((run / a.obj_dir / "objects.json").read_text()):
         name, od = o["name"], run / a.obj_dir / o["name"]
@@ -714,8 +803,18 @@ def load_objects(run, a, slam, n, fps, plane, dev, rep):
             raise FileNotFoundError(f"{cache} missing or stale: run fuse_objects (V2D_OBJ_DIR={a.obj_dir}) first")
         c_ = np.load(cache)
         near, vis = c_["near"], c_["vis"]
+        pd = run / a.init_objects / name / "poses"
+        W0 = np.full((n, 4, 4), np.nan)
+        for t in slam:
+            if t < n and (pd / f"{t:06d}.json").exists():
+                W0[t] = slam[t] @ load_T(pd / f"{t:06d}.json")
+        mp = ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj"
         hc = rep.get(name, {}).get("hand_contact", {})
+        cm = comotion_grasps(W0, np.asarray(trimesh.load(mp, force="mesh").vertices), hands_st, slam, n, plane, a) if a.comotion else {}
+        hc = {sd: sorted(set(hc.get(sd, [])) | set(cm.get(sd, []))) for sd in ("left", "right")}
         carry = rep.get(name, {}).get("hand_carry") if a.carry else None  # contact is not carrying (fuse_objects)
+        if carry is not None:
+            carry = {sd: sorted(set(carry.get(sd, [])) | set(cm.get(sd, []))) for sd in ("left", "right")}
         hk = carry if carry is not None else hc
         side_at = [tuple(sd for sd in ("left", "right") if t in set(hc.get(sd, []))) for t in range(n)]
         touch_h = np.array([bool(x) for x in side_at])
@@ -739,26 +838,37 @@ def load_objects(run, a, slam, n, fps, plane, dev, rep):
                     and d["n_scan"] >= 300 and d["moved_from_init_mm"] <= 50):
                 icp.append((t, slam[t] @ np.array(d["T"]), a.w_icp * d["fitness"] ** 2))
         icp = retime(icp, float(rep.get(name, {}).get("icp_time_shift", 0.0)) if a.carry else 0.0, slam)  # colour time, as fuse_objects
-        mp = ROOT / "meshes_obj" / name / f"{name}.obj"
         sym = mesh_symmetry(mp)
         meas, n_ch = canon_measurements({"fp": fp, "icp": icp}, sym)
         mesh = trimesh.load(mp, force="mesh")
         verts = np.asarray(mesh.vertices)
         static_w, still, rest = damping_weights(near, vis, held, gsegs, {t: T_ for t, T_, _ in meas["fp"]}, fps,
                                                 verts, plane, sym["cont_axis"])
-        pd = run / a.init_objects / name / "poses"
-        W0 = np.full((n, 4, 4), np.nan)
-        for t in slam:
-            if t < n and (pd / f"{t:06d}.json").exists():
-                W0[t] = slam[t] @ load_T(pd / f"{t:06d}.json")
         flat = [(t, T_, *((w, w) if np.isscalar(w) else w)) for src in ("fp", "icp") for t, T_, w in meas[src]]
+        if evidence is not None:
+            er = evidence["objects"][name]
+            if not er["geometry_pass"] or hashlib.sha256(mp.read_bytes()).hexdigest() != er["mesh_sha256"]:
+                raise ValueError(f"Failed geometry gate or changed mesh for {name}")
+            if not er.get("observations"):
+                raise ValueError("Evidence has no recorded observations; regenerate with current evidence_fusion")
+            flat = [(r["frame"], np.asarray(r["pose_world"]), r["weight"], r["weight"])
+                    for r in er["observations"]]
+            # Shape hypotheses were independently scored; do not discard handles or
+            # bristles by declaring their orientation unobservable here.
+            sym = {"group": [np.eye(3)], "cont_axis": None, "center": np.asarray(mesh.centroid), "kind": "evidence"}
+            hk = {sd: sorted({t for g in er["segments"] if g["side"] == sd
+                             for t in range(g["from"], g["to"] + 1)}) for sd in ("left", "right")}
+            hc = {sd: sorted(set(hc.get(sd, [])) | set(hk[sd])) for sd in hk}
+            # Cached stillness was computed from the old pose hypotheses. Reuse
+            # neither that rotation lock nor an occlusion-based stop prior.
+            static_w = np.zeros(n - 1)
         c = np.asarray(verts).mean(0)
         sel = np.random.default_rng(0).choice(len(verts), min(400, len(verts)), replace=False)
         objs.append({"name": name, "W0": W0, "meas": flat, "sym": sym, "sdf": SDFGrid(mesh, res=160, device=dev),
                      "verts": verts[sel], "static_w": static_w, "grasp": hc, "carry": hk,
                      "radius": float(np.linalg.norm(verts - c, axis=1).max()),
                      "info": {"n_fp": len(meas["fp"]), "n_icp": len(meas["icp"]), "symmetry": sym["kind"],
-                              "canonicalised": n_ch, "static_frac": float((static_w > 0.5).mean())}})
+                              "canonicalised": n_ch, "comotion_frames": {sd: len(v) for sd, v in cm.items()}, "static_frac": float((static_w > 0.5).mean())}})
     return objs, hands_st
 
 
@@ -814,7 +924,7 @@ def main(argv=None):
     plane = json.loads(tp.read_text()) if tp.exists() else None
     if plane is None:
         print("WARNING: no table_plane.json -- table terms off, quality cannot pass", flush=True)
-    rep = json.loads((run / "fusion_report.json").read_text())
+    rep = json.loads((run / f"fusion_report_{a.obj_dir.replace('objects_', '')}.json").read_text())   # the report of THIS obj_dir's fusion
     objs, hands_st = load_objects(run, a, slam, n, fps, plane, dev, rep)
     hands, recs = load_hands(run, a, slam, hands_st)
     sp = run / "stereo" / a.segment_params / "report.json" if a.segment_params else None

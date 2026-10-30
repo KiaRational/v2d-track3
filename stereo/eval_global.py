@@ -82,7 +82,7 @@ def main():
     rep = {"episode": a.run, "sim3_scale": float(s), "align_mode": "sim3_robust_pose" if a.sim3 else "se3_robust_pose",
            "align_inlier_frac": float(keep.mean()), "variants": {}}
     for nm in names:
-        mesh = trimesh.load(ROOT / "meshes_obj" / nm / f"{nm}.obj", force="mesh")
+        mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj", force="mesh")
         ctr = (mesh.bounds[0] + mesh.bounds[1]) / 2
         V = mesh.vertices[np.random.default_rng(0).choice(len(mesh.vertices), 2000, False)]
         mdl = ROOT / "cache/global_models" / f"{nm}.npz"

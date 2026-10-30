@@ -10,6 +10,7 @@ The initial version points at the existing variants (no copy).
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -50,7 +51,8 @@ def write_variant(run: str, name: str, tr, parent: str, change: dict, base_hands
     """New version: npz + pipeline-layout variant dirs. Not accepted until stage-10 validation says so."""
     r = ROOT / "runs" / run
     T_wc = tr.extra["T_world_cam"]
-    ov = f"hoi4d_{name}"
+    tree = os.environ.get("HOI4D_DIR", "hoi4d")   # a separate tree (e.g. hoi4d_c) gets its own variant dirs
+    ov = f"{tree}_{name}"
     od = r / ov
     if od.exists():
         shutil.rmtree(od)

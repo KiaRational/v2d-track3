@@ -3,6 +3,7 @@ stereo/physics_check.py in cache/coacd/<name>/part_*.obj; a cup is ~24 parts aro
 hull). Each part is stored as half-spaces (A x <= b) for fast signed-distance-like penetration tests."""
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 import numpy as np
@@ -11,13 +12,13 @@ from scipy.spatial import ConvexHull
 
 from .. import io as hio
 
-CACHE = hio.ROOT / "cache/coacd"
+CACHE = hio.ROOT / ("cache/coacd" + {"meshes_obj": ""}.get(os.environ.get("V2D_MESH_DIR", "meshes_obj"), "_" + os.environ.get("V2D_MESH_DIR", "")))  # per mesh set
 
 
 class ObjectAsset:
     def __init__(self, name: str, n_surface: int = 1500, seed: int = 0):
         self.name = name
-        mesh = trimesh.load(hio.ROOT / "meshes_obj" / name / f"{name}.obj", force="mesh")
+        mesh = trimesh.load(hio.ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj", force="mesh")
         self.extent = mesh.bounds[1] - mesh.bounds[0]
         rng = np.random.default_rng(seed)
         pts, _ = trimesh.sample.sample_surface(mesh, n_surface, seed=int(rng.integers(1 << 30)))
@@ -30,6 +31,10 @@ class ObjectAsset:
             h = ConvexHull(v)
             self.parts.append((h.equations[:, :3], h.equations[:, 3]))  # n.x + d <= 0 inside
         self.collision = "coacd_parts" if self.parts else "none (no cached decomposition)"
+        if not self.parts and os.environ.get("HOI4D_ALLOW_NO_COLLISION") != "1":
+            # silently-zero penetration made every collision term / anomaly of a mesh set without a cache vanish
+            raise FileNotFoundError(f"no CoACD parts for {name} in {CACHE / name} (build them: beat1/coacd_cache.sbatch; "
+                                    "HOI4D_ALLOW_NO_COLLISION=1 to run without collision)")
 
     def penetration(self, pts_obj: np.ndarray) -> np.ndarray:
         """Depth (m, >= 0) of points (object frame) inside the collision geometry: max over parts of the

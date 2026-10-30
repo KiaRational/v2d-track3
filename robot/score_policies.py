@@ -9,6 +9,7 @@ SP-SR, MP-SR, RPE, MPPE. ADD fixed points: 2000 seeded mesh vertices (the kit's 
 stages/eval_objects.py. Reference frames the rollout does not cover are reported (not silently dropped).
 Usage: python score_policies.py --runs hop_p00_contact:public_ep000000 ... --out scores.json   (flash_chord image)
 """
+import os
 import argparse
 import importlib.util
 import json
@@ -45,7 +46,7 @@ def add_chunked(ach, refp, V, chunk=32):
 
 
 def verts(name):
-    mesh = trimesh.load(ROOT / "meshes_obj" / name / f"{name}.obj", force="mesh")
+    mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj", force="mesh")
     v = np.asarray(mesh.vertices)
     return v[np.random.default_rng(0).choice(len(v), min(2000, len(v)), False)]
 

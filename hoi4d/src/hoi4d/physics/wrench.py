@@ -8,6 +8,7 @@ magnitude f_max; feasibility = bounded least squares residual of sum_k G_k lambd
 """
 from __future__ import annotations
 
+import os
 import numpy as np
 import trimesh
 from scipy.optimize import lsq_linear
@@ -29,7 +30,7 @@ def surface_normals(name):
 
 def a_path(name):
     from .. import io as hio
-    return hio.ROOT / "meshes_obj" / name / f"{name}.obj"
+    return hio.ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj"
 
 
 def cone_edges(n: np.ndarray, mu: float, k: int = 8) -> np.ndarray:

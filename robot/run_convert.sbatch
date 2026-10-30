@@ -26,12 +26,12 @@ python ~/v2d-vulcan/robot/export_result_bundle.py "$RUN" "${SEL[@]}" --hands "${
 OBJ=$(python -c "import json, sys; print(json.load(open(sys.argv[1]))['sources']['object'])" $CLIP/outputs/result/manifest.json)
 # keep the sim ground at our table top: cancel the loader's frame-0 'lowest object point -> z = 0' shift
 ZOFF=$(python -c "import json, sys; print(json.load(open(sys.argv[1])).get('loader_ground_z_offset', 0.0))" $CLIP/outputs/result/manifest.json)
-HMD=$V2D_ROOT/robot/hmd; mkdir -p $HMD $V2D_ROOT/robot/rg_cache
+HMD=${V2D_HMD:-$V2D_ROOT/robot/hmd}; RGC=${V2D_RG_CACHE:-$V2D_ROOT/robot/rg_cache}; mkdir -p $HMD $RGC   # compliant tree: V2D_HMD=robot/hmd_c
 RG=$V2D_ROOT/fc_src/robotic_grounding
 LIB=$V2D_ROOT/fc_src/reconstruction/modules/v2d_task_library_loader/lib
 docker run --rm --gpus all -v $V2D_ROOT:$V2D_ROOT -v $HOME/v2d-vulcan:$HOME/v2d-vulcan -e HUMAN_MOTION_DATA_DIR=$HMD \
   -v $LIB:/opt/conda/lib/python3.11/site-packages/v2d/task_library_loader/lib \
-  -e ROBOTIC_GROUNDING_INTERMEDIATE_DIR=$V2D_ROOT/robot/rg_cache \
+  -e ROBOTIC_GROUNDING_INTERMEDIATE_DIR=$RGC -e V2D_MESH_DIR=${V2D_MESH_DIR:-meshes_obj} \
   -e PYTHONPATH=$RG/source/robotic_grounding -e V2D_ROOT=$V2D_ROOT rg bash -c "
 set -e; cd $RG
 python -c 'import v2d.task_library_loader.lib.ego_recon_loader as m; assert \"_bodies\" in open(m.__file__).read(), m.__file__'

@@ -23,6 +23,7 @@ query's frame are marked not visible; reseeding covers the clip.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -63,7 +64,7 @@ def prepare(run_name: str, man: dict, tr, cfg: dict) -> dict:
         if e["id"].startswith("hand_"):
             continue  # hands are seeded on their joints below
         for f in range(0, F, every):
-            p = run / "objects_sam3/masks" / str(e["mask_id"]) / f"{f:06d}.png"
+            p = run / hio.obj_dir() / "masks" / str(e["mask_id"]) / f"{f:06d}.png"
             if not p.exists():
                 continue
             ys, xs = np.nonzero(_erode(np.asarray(Image.open(p)) > 0))
@@ -91,7 +92,7 @@ def prepare(run_name: str, man: dict, tr, cfg: dict) -> dict:
             # swapped for the whole clip), so take the hand mask (2 or 3) that contains most of the projected joints
             best, m = -1, None
             for cand in (2, 3):
-                mp = run / "objects_sam3/masks" / str(cand) / f"{f:06d}.png"
+                mp = run / hio.obj_dir() / "masks" / str(cand) / f"{f:06d}.png"
                 if not mp.exists():
                     continue
                 mm = np.asarray(Image.open(mp)) > 0
@@ -130,7 +131,7 @@ def infer(run_name: str, cfg: dict, device="cuda") -> dict:
     import torch
     from trackeverything.demo_hf import TrackEverything
     run = ROOT / "runs" / run_name
-    out_dir = run / "hoi4d"
+    out_dir = run / os.environ.get("HOI4D_DIR", "hoi4d")
     q = dict(np.load(out_dir / "te_queries.npz", allow_pickle=False))
     F, (W, H) = int(q["frame_count"]), q["size"].astype(int)
     K, T_wc = q["K"], q["T_world_cam"].copy()

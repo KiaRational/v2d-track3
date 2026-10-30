@@ -64,11 +64,11 @@ def kabsch(P, Q):
     return R, mq - R @ mp
 
 
-def icp(model_pts, model_nrm, scan, T0):
+def icp(model_pts, model_nrm, scan, T0, max_iters=ITERS):
     """Symmetric trimmed ICP of the camera-facing model surface onto the scan."""
     tree_s = cKDTree(scan)
     T = T0.copy()
-    for _ in range(ITERS):
+    for _ in range(max_iters):
         P = model_pts @ T[:3, :3].T + T[:3, 3]
         N = model_nrm @ T[:3, :3].T
         vis = (N * P).sum(1) < 0  # faces the camera (camera at origin)
@@ -100,7 +100,7 @@ def process(args):
     K = json.loads((run / "recon_hawor/intrinsics_stable.json").read_text())
     Km = np.array([[K["fx"], 0, K["cx"]], [0, K["fy"], K["cy"]], [0, 0, 1]])
     shape = (K["height"], K["width"])
-    mesh = trimesh.load(ROOT / "meshes_obj" / name / f"{name}.obj", force="mesh")
+    mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj", force="mesh")
     pts, fidx = trimesh.sample.sample_surface(mesh, 8000, seed=0)
     nrm = mesh.face_normals[fidx]
     out = run / OBJ / name / (out_name or "stereo_icp")

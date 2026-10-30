@@ -87,7 +87,7 @@ def main():
         for o in json.loads((run / a.obj_dir / "objects.json").read_text()):
             nm = o["name"]
             if nm not in sdfs:
-                sdfs[nm] = SDFGrid(trimesh.load(ROOT / "meshes_obj" / nm / f"{nm}.obj", force="mesh"), res=128,
+                sdfs[nm] = SDFGrid(trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj", force="mesh"), res=128,
                                    device=dev)
             pd = run / a.variant / nm / "poses"
             W = {t: slam[t] @ load_T(pd / f"{t:06d}.json") for t in slam if (pd / f"{t:06d}.json").exists()}

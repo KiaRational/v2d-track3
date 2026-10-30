@@ -196,7 +196,7 @@ def main():
         nm = o["name"]
         pd = run / a.variant / nm / "poses"
         W = {t: slam[t] @ load_T(pd / f"{t:06d}.json") for t in slam if (pd / f"{t:06d}.json").exists()}
-        m = trimesh.load(ROOT / "meshes_obj" / nm / f"{nm}.obj", force="mesh")
+        m = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj", force="mesh")
         touched = set().union(*[set(v) for v in rep.get(nm, {}).get("hand_contact", {}).values()]) \
             if rep.get(nm, {}).get("hand_contact") else set()
         rest = [t for t in W if t not in touched] or list(W)

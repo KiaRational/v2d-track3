@@ -94,7 +94,7 @@ def main():
         nm = o["name"]
         pd = run / a.variant / nm / "poses"
         W = {t: slam[t] @ load_T(pd / f"{t:06d}.json") for t in slam if (pd / f"{t:06d}.json").exists()}
-        sdf = SDFGrid(trimesh.load(ROOT / "meshes_obj" / nm / f"{nm}.obj", force="mesh"), res=160, device=dev)
+        sdf = SDFGrid(trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj", force="mesh"), res=160, device=dev)
         objs.append({"name": nm, "W": W, "sdf": sdf, "grasp": rep.get(nm, {}).get("hand_contact", {})})
 
     outdir = run / "stereo" / (a.out or f"{a.hands}_refined")

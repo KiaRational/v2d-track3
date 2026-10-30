@@ -124,7 +124,7 @@ def main():
         taken.append(det)
         objs.append({"id": OBJECT_IDS[k], "name": name, "prompt": prompt, "ref_frame": det["frame"],
                      "box": det["box"], "dino_confidence": det["confidence"],
-                     "mesh": str(ROOT / "meshes_obj" / name / f"{name}.obj")})
+                     "mesh": str(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj")})
         print(f"{name}: id {OBJECT_IDS[k]}, first seen frame {det['frame']} (conf {det['confidence']:.2f})", flush=True)
 
     # 2) one joint SAM2 pass: all objects + the toolkit's hand mask prompts

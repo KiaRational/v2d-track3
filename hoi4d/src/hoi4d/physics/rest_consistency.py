@@ -98,7 +98,7 @@ class _Evidence:
     def frame(self, n, f):
         k = (n, f)
         if k not in self._c:
-            mp = self.run / "objects_sam3/masks" / str(self.mid.get(n)) / f"{f:06d}.png"
+            mp = self.run / hio.obj_dir() / "masks" / str(self.mid.get(n)) / f"{f:06d}.png"
             dp = self.run / "depth_stereo" / f"{f:06d}.png"
             if not mp.exists():
                 self._c[k] = None

@@ -1,0 +1,6 @@
+# Overlay (HOI4D_CFG_OVERLAY) for the submission-compliant tree: no public data in the reconstruction.
+# Run with HOI4D_DIR=hoi4d_c V2D_MESH_DIR=meshes_recon (our reconstructed meshes, never meshes_obj).
+inputs:
+  objects_variant: fused_all_recon     # SAM3 + FoundationPose + stereo ICP + fusion on meshes_recon (V2D_OBJ_DIR=objects_recon)
+  hands_variant: hands_c               # per side: despun Dyn-HaMR (dynhamr_smooth) or, where it fails the gate, mano_fit (beat1/hands_select.py)
+  hands_fallbacks: [mano_fit]          # mesh-free stereo fit only (the *_phys / *_hop variants used the public meshes)

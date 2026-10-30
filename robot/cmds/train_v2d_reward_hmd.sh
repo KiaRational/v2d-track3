@@ -15,16 +15,19 @@ if [ ! -f /workspace/src/flash_chord/configs/experiment/sharpa_flash_sac_v2d.yam
 fi
 P=${HMD:-/scratch/kghasemz/v2d/robot/hmd}/ego_recon/processed/sequence_id=${SEQ}/robot_name=sharpa_wave
 export WANDB_MODE=offline WANDB_DIR=/scratch/kghasemz/v2d/robot/wandb
-SUP=true; [ -s /scratch/kghasemz/v2d/robot/hmd/ego_recon/reconstructed_stage/${SEQ}_support.usda ] && \
-  grep -qE "Cylinder|Cube" /scratch/kghasemz/v2d/robot/hmd/ego_recon/reconstructed_stage/${SEQ}_support.usda || SUP=false
+SUP=true; [ -s ${HMD:-/scratch/kghasemz/v2d/robot/hmd}/ego_recon/reconstructed_stage/${SEQ}_support.usda ] && \
+  grep -qE "Cylinder|Cube" ${HMD:-/scratch/kghasemz/v2d/robot/hmd}/ego_recon/reconstructed_stage/${SEQ}_support.usda || SUP=false
 # Our reconstructed table (write_table_support.py, prim "table"): the finite table replaces the infinite ground plane
 # at table height, and the hands collide with it (physical; fingers can still reach under the rim). TABLE=0 opts out.
 TBL=""; [ "${TABLE:-1}" = 0 ] && SUP=false  # ground plane + our table together launches objects (overlapping supports)
 if [ "$SUP" = true ] && [ "${TABLE:-1}" = 1 ] && \
-   grep -q '"table"' /scratch/kghasemz/v2d/robot/hmd/ego_recon/reconstructed_stage/${SEQ}_support.usda; then
+   grep -q '"table"' ${HMD:-/scratch/kghasemz/v2d/robot/hmd}/ego_recon/reconstructed_stage/${SEQ}_support.usda; then
   TBL="collision.ground=false collision.robot_support_collision=true"
 fi
 echo "support=$SUP table overrides: ${TBL:-none}"
+# V2D: observed-hand mask (hand reward + wrist termination only where the human hand was seen); HAND_VALID=0 opts out
+HV=/scratch/kghasemz/v2d/robot/hand_valid/${SEQ}.json; CLIPNPZ=/scratch/kghasemz/v2d/robot/clips/${SEQ}/outputs/result/result.npz
+if [ "${HAND_VALID:-1}" = 1 ] && [ -f $CLIPNPZ ]; then mkdir -p $(dirname $HV); python /scratch/kghasemz/v2d/beat1/hand_valid.py $CLIPNPZ $HV && export V2D_HAND_VALID=$HV; fi
 python scripts/train_flash_sac.py experiment=sharpa_flash_sac_v2d "task.parquet='${P}'" reset.seed=42 \
   curriculum=${CURR:-tracking_250m_v2d} scene.support=$SUP ${TBL} sim.njmax=1024 sim.nconmax=512 scene.world_count=2048 \
   logging.mode=offline logging.upload_checkpoints=false logging.run_name=${NAME} \

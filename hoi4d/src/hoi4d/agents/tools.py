@@ -365,7 +365,7 @@ class Toolbox:
 
 def _py(script, args):
     r = subprocess.run([sys.executable, str(script)] + [str(x) for x in args], capture_output=True, text=True,
-                       env={**os.environ, "V2D_OBJ_DIR": "objects_sam3"})
+                       env={**os.environ, "V2D_OBJ_DIR": hio.obj_dir()})
     if r.returncode:
         raise RuntimeError(f"{Path(script).name} failed: {r.stderr[-600:]}")
     return r.stdout

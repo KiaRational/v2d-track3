@@ -153,7 +153,7 @@ def parser():
     ap.add_argument("runs", nargs="+")
     ap.add_argument("--hands", default="mano_fit_phys")
     ap.add_argument("--objects", default="fused_all_sam3")
-    ap.add_argument("--obj_dir", default="objects_sam3")
+    ap.add_argument("--obj_dir", default=os.environ.get("V2D_OBJ_DIR", "objects_sam3"))
     ap.add_argument("--tag", default="base")
     ap.add_argument("--stride", type=int, default=1)
     ap.add_argument("--only_objects", nargs="*", default=None)
@@ -211,7 +211,7 @@ def main(argv=None):
                 continue
             pd = run / a.objects / o["name"] / "poses"
             W = {t: load_T(pd / f"{t:06d}.json") for t in slam if (pd / f"{t:06d}.json").exists()}
-            mesh = trimesh.load(ROOT / "meshes_obj" / o["name"] / f"{o['name']}.obj", force="mesh")
+            mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / o["name"] / f"{o['name']}.obj", force="mesh")
             P, fi = trimesh.sample.sample_surface(mesh, 3000, seed=0)
             objs.append({"name": o["name"], "id": o["id"], "W": W, "P": P, "N": mesh.face_normals[fi],
                          "V": np.asarray(mesh.vertices), "sdf": None if a.no_hands else SDFGrid(mesh, res=128, device=dev),

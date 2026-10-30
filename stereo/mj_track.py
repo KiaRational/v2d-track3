@@ -180,7 +180,7 @@ def main():
         pd = run / a.variant / o["name"] / "poses"
         W = {t: slam[t] @ load_T(pd / f"{t:06d}.json") for t in ts if (pd / f"{t:06d}.json").exists()}
         if W:
-            parts = sorted((ROOT / "cache/coacd" / o["name"]).glob("part_*.obj"))
+            parts = sorted((ROOT / ("cache/coacd" + {"meshes_obj": ""}.get(os.environ.get("V2D_MESH_DIR", "meshes_obj"), "_" + os.environ.get("V2D_MESH_DIR", ""))) / o["name"]).glob("part_*.obj"))
             objs.append({"name": o["name"], "W": W, "parts": parts})
     cen = np.mean([o["W"][min(o["W"])][:3, 3] for o in objs], 0)
     table_c = cen - up * (cen @ up - table_h)
@@ -199,7 +199,7 @@ def main():
     for o in objs:
         for k, p in enumerate(o["parts"]):
             x.append(f'<mesh name="{o["name"]}_{k}" file="{p}"/>')
-        x.append(f'<mesh name="{o["name"]}_vis" file="{ROOT / "meshes_obj" / o["name"] / (o["name"] + ".obj")}"/>')
+        x.append(f'<mesh name="{o["name"]}_vis" file="{ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / o["name"] / (o["name"] + ".obj")}"/>')
     for s_ in ("left", "right"):
         if s_ in prep["sides"] and not a.capsule_hand:
             x += hand_assets(s_, prep["sides"][s_].get("mesh_parts", {}))
@@ -262,7 +262,7 @@ def main():
     for o in objs:
         import trimesh
         from scipy.spatial import cKDTree
-        m = trimesh.load(ROOT / "meshes_obj" / o["name"] / f"{o['name']}.obj", force="mesh")
+        m = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / o["name"] / f"{o['name']}.obj", force="mesh")
         P, fi = trimesh.sample.sample_surface(m, 20000, seed=0)
         surf[o["name"]] = (cKDTree(P), P, m.face_normals[fi])
 

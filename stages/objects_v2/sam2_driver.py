@@ -272,6 +272,9 @@ class Driver:
     def nested(self, ida, ma, idb, mb):
         """Legitimate overlap: a smaller object sitting on/in a larger one (lid on
         pot) - the larger object's mask strictly contains the smaller one's."""
+        if any(o["mesh_ext"] is None for o in self.objs):   # size-free mode: the larger MASK is the container
+            (sm, bm) = sorted([ma, mb], key=lambda m: m.sum())
+            return bm.sum() >= 1.3 * sm.sum() and containment(sm, bm) >= 0.85
         diag = {o["id"]: float(np.linalg.norm(o["mesh_ext"])) for o in self.objs}
         (sid, sm), (bid, bm) = sorted([(ida, ma), (idb, mb)], key=lambda x: diag[x[0]])
         return (diag[bid] > 1.2 * diag[sid] and bm.sum() >= 1.08 * sm.sum()

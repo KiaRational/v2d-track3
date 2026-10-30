@@ -101,7 +101,7 @@ def build_model(name):
     f = CACHE / f"{name}.npz"
     if f.exists():
         return
-    mesh = trimesh.load(ROOT / "meshes_obj" / name / f"{name}.obj", force="mesh")
+    mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj", force="mesh")
     dense, fi = trimesh.sample.sample_surface(mesh, N_DENSE, seed=1)
     dn = mesh.face_normals[fi]
     rng = np.random.default_rng(0)

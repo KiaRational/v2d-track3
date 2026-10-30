@@ -24,7 +24,15 @@ HERE = Path(__file__).resolve().parents[2]
 
 
 def load_cfg(path=None):
-    return yaml.safe_load(open(path or HERE / "configs/default.yaml"))
+    cfg = yaml.safe_load(open(path or HERE / "configs/default.yaml"))
+    ov = os.environ.get("HOI4D_CFG_OVERLAY")   # partial YAML deep-merged on top (e.g. configs/compliant.yaml)
+    if ov:
+        def merge(a, b):
+            for k, v in b.items():
+                a[k] = merge(a.get(k, {}), v) if isinstance(v, dict) and isinstance(a.get(k), dict) else v
+            return a
+        cfg = merge(cfg, yaml.safe_load(open(ov)))
+    return cfg
 
 
 def cmd_ingest(a, cfg):
@@ -109,7 +117,9 @@ def cmd_track(a, cfg):
     man = json.loads((hio.out_dir(a.run) / "scene_manifest.json").read_text())
     tr, _ = load_version(a.run, "initial")
     print(json.dumps(cotracker.track(a.run, man, tr.extra["T_world_cam"], cfg["cotracker"]), indent=1))
+    ft, cotracker.TRACKS_FILE = cotracker.TRACKS_FILE, "tracks.npz"   # this stage checks its OWN CoTracker tracks (tracks_te.npz comes later, from te)
     ag = cotracker.agreement(tr, cotracker.load_tracks(a.run), run_name=a.run)
+    cotracker.TRACKS_FILE = ft
     for n, d in ag.items():
         r = d["rigid_resid_m"]
         print(f"  {n}: CoTracker rigid residual median {np.nanmedian(r) * 1000:.1f} mm, p95 {np.nanpercentile(r, 95) * 1000:.1f} mm")

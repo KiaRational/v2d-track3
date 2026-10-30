@@ -31,7 +31,7 @@ class Overlay:
         im = rgb.copy()
         labels = []
         for e in self.ents:
-            p = self.run / "objects_sam3/masks" / str(e["mask_id"]) / f"{f:06d}.png"
+            p = self.run / hio.obj_dir() / "masks" / str(e["mask_id"]) / f"{f:06d}.png"
             if not p.exists():
                 continue
             m = np.asarray(Image.open(p)) > 0

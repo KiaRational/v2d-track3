@@ -91,7 +91,7 @@ class Evidence:
         hand_m = np.zeros((F, self.h, self.w), bool)
         for side, mid in (("left", 2), ("right", 3)):
             for f in range(F):
-                p = R / "objects_sam3/masks" / str(mid) / f"{f:06d}.png"
+                p = R / hio.obj_dir() / "masks" / str(mid) / f"{f:06d}.png"
                 if p.exists():
                     hand_m[f] |= self._load_mask(p)
         self.hand_mask = torch.tensor(hand_m, device=DEV)
@@ -100,7 +100,7 @@ class Evidence:
             m = np.zeros((F, self.h, self.w), bool)
             have = np.zeros(F, bool)
             for f in range(F):
-                p = R / "objects_sam3/masks" / str(mid) / f"{f:06d}.png"
+                p = R / hio.obj_dir() / "masks" / str(mid) / f"{f:06d}.png"
                 if mid is not None and p.exists():
                     m[f] = self._load_mask(p)
                     have[f] = m[f].sum() > 20
@@ -539,12 +539,19 @@ def asset_normals(n):
     return _NORMALS[n]
 
 
+def _part_depth(P, n, d):
+    return torch.relu(-(P @ n.T + d).amax(-1))
+
+
 def pen_parts(P, parts):
-    """Differentiable penetration depth of points (..., P, 3) into a union of convex parts (max over parts)."""
+    """Differentiable penetration depth of points (..., P, 3) into a union of convex parts (max over parts).
+    Checkpointed per part: the (..., P, faces) plane distances are recomputed in backward instead of stored for
+    every part (with real CoACD parts that stack ran long episodes out of GPU memory)."""
+    from torch.utils.checkpoint import checkpoint
     best = torch.zeros(P.shape[:-1], device=P.device)
     for n, d in parts:
-        s = P @ n.T + d
-        best = torch.maximum(best, torch.relu(-s.amax(-1)))
+        dep = checkpoint(_part_depth, P, n, d, use_reentrant=False) if P.requires_grad else _part_depth(P, n, d)
+        best = torch.maximum(best, dep)
     return best
 
 

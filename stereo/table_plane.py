@@ -17,6 +17,7 @@ Writes <run>/table_plane.json {"up": [3], "height": h (p . up = h on the table),
 {arc_coverage, contour_inlier_frac, ok}, "diag_hands": ...}; an existing file keeps its up/height
 (only disk keys are added) unless --refit. PNG: $V2D_VIZ/14_joint/<run>_table_disk.png.
 Usage: python table_plane.py <run> [...] [--obj_dir objects_sam3] [--variant fused_all_sam3] [--refit]
+       compliant: --obj_dir objects_free --from_masks --refit (object centres from size-free masks; no mesh, no pose)
 """
 from __future__ import annotations
 
@@ -206,6 +207,8 @@ def main():
     ap.add_argument("runs", nargs="+")
     ap.add_argument("--obj_dir", default="objects_sam3")
     ap.add_argument("--variant", default="fused_all_sam3")
+    ap.add_argument("--from_masks", action="store_true",
+                    help="object centres from <obj_dir>/masks + stereo depth instead of <variant> poses (compliant: no mesh)")
     ap.add_argument("--frames", type=int, default=8)
     ap.add_argument("--disk_frames", type=int, default=24)
     ap.add_argument("--thickness", type=float, default=0.03, help="nominal table top thickness (m)")
@@ -224,6 +227,19 @@ def main():
         K = np.array([[ki["fx"], 0, ki["cx"]], [0, ki["fy"], ki["cy"]], [0, 0, 1.0]])
         cen = []
         for o in json.loads((run / a.obj_dir / "objects.json").read_text()):
+            if a.from_masks:   # object centres from the masks + stereo depth: no object pose / mesh involved
+                for t in ts[::10]:
+                    mp = run / a.obj_dir / "masks" / str(o["id"]) / f"{t:06d}.png"
+                    d = decode_depth(run / f"depth_stereo/{t:06d}.png") if mp.exists() else None
+                    if d is None:
+                        continue
+                    v, u = np.nonzero((cv2.imread(str(mp), cv2.IMREAD_GRAYSCALE) > 0) & (d > 0.15))
+                    if len(u) < 100:
+                        continue
+                    z = d[v, u]
+                    X = np.median(np.stack([(u - K[0, 2]) / K[0, 0] * z, (v - K[1, 2]) / K[1, 1] * z, z], 1), 0)
+                    cen.append(slam[t][:3, :3] @ X + slam[t][:3, 3])
+                continue
             pd = run / a.variant / o["name"] / "poses"
             cen += [(slam[t] @ load_T(pd / f"{t:06d}.json"))[:3, 3] for t in ts[::10] if (pd / f"{t:06d}.json").exists()]
         c = np.median(cen, 0)

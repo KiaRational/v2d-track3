@@ -329,7 +329,7 @@ class JointTests(unittest.TestCase):
             write(run / "episode.json", {"fps": FPS})
             write(run / "table_plane.json", {"up": [0, 0, 1], "height": -0.3, "center": [0, 0, -0.3], "radius": 0.24,
                                              "thickness": 0.03})
-            write(run / "fusion_report.json", {"box": {"hand_contact": {"right": list(range(15, 45)), "left": []}}})
+            write(run / "fusion_report_sam3.json", {"box": {"hand_contact": {"right": list(range(15, 45)), "left": []}}})
             write(run / "objects_sam3/objects.json", [{"id": 1, "name": "box"}])
             mesh = root / "meshes_obj/box/box.obj"
             mesh.parent.mkdir(parents=True)
@@ -354,7 +354,7 @@ class JointTests(unittest.TestCase):
             time.sleep(0.01)
             np.savez(run / "objects_sam3/box/.contact_vis_poses_smoothed.npz", near=np.zeros(N, bool),
                      vis=np.ones(N), touch=np.zeros(N, bool))
-            argv = ["syn", "--device", "cpu", "--iters_stage1", "20", "--iters_stage2", "30"]
+            argv = ["syn", "--device", "cpu", "--iters_stage1", "20", "--iters_stage2", "30", "--comotion", "0"]
             with patch.object(J, "ROOT", root), patch.object(J, "Mano", lambda *a: None), \
                     patch.object(J, "SDFGrid", Box), patch.object(J, "mano_forward", lambda m, *a: fk(*a)), \
                     patch.dict(os.environ, {"V2D_ROOT": str(root)}):
@@ -383,6 +383,31 @@ class JointTests(unittest.TestCase):
                     (run / "fused_other").mkdir()
                     with self.assertRaises(ValueError):
                         J.main(argv + ["--variant", "fused_other"])
+                    # The optional recovery path must consume recorded observations,
+                    # preserve their body frame, and reject stale/failed evidence.
+                    import hashlib
+                    import shutil
+                    shutil.copytree(run / "objects_sam3", run / "objects_recon")
+                    mrec = root / "meshes_recon/box/box.obj"
+                    mrec.parent.mkdir(parents=True)
+                    shutil.copyfile(mesh, mrec)
+                    er = {"complete": True, "fps": FPS, "mesh_root": "meshes_recon",
+                          "objects": {"box": {"geometry_pass": True,
+                          "mesh_sha256": hashlib.sha256(mrec.read_bytes()).hexdigest(),
+                          "observations": [{"frame": t, "pose_world": W[t].tolist(), "weight": .8} for t in range(N)],
+                          "segments": [{"side": "right", "from": 15, "to": 44}]}}}
+                    ep = run / "recovered/evidence_report.json"
+                    write(ep, er)
+                    aa = J.default_cfg(run="syn", obj_dir="objects_recon", evidence_variant="recovered", comotion=0)
+                    with patch.dict(os.environ, {"V2D_MESH_DIR": "meshes_recon"}):
+                        loaded, _ = J.load_objects(run, aa, dict(enumerate(cams)), N, FPS, None, "cpu", {})
+                        self.assertEqual(loaded[0]["sym"]["kind"], "evidence")
+                        np.testing.assert_allclose(loaded[0]["meas"][10][1], W[10])
+                        self.assertEqual(loaded[0]["carry"]["right"], list(range(15,45)))
+                        er["objects"]["box"]["geometry_pass"] = False
+                        write(ep, er)
+                        with self.assertRaises(ValueError):
+                            J.load_objects(run, aa, dict(enumerate(cams)), N, FPS, None, "cpu", {})
 
 
 if __name__ == "__main__":

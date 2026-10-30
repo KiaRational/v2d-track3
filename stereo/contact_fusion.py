@@ -73,7 +73,7 @@ def main():
             Vo = E["obj_verts"]  # EgoPHI's decimated object vertices, mesh frame
             pd = run / a.variant / nm / "poses"
             W = {t: load_T(pd / f"{t:06d}.json") for t in slam if (pd / f"{t:06d}.json").exists()}
-            mesh = trimesh.load(ROOT / "meshes_obj" / nm / f"{nm}.obj", force="mesh")
+            mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj", force="mesh")
             P, fi = trimesh.sample.sample_surface(mesh, 30000, seed=0)
             Nrm, tree = mesh.face_normals[fi], cKDTree(P)
             m_, com, I = urdf_inertial(nm)

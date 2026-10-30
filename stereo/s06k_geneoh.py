@@ -118,7 +118,7 @@ def scene(run, a):
     for o in json.loads((run / a.obj_dir / "objects.json").read_text()):
         nm = o["name"]
         files = list((run / a.objects / nm / "poses").glob("*.json"))
-        mesh_p = ROOT / "meshes_obj" / nm / f"{nm}.obj"
+        mesh_p = ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj"
         if len(files) < n or not mesh_p.exists():
             log(f"object {nm}: {len(files)}/{n} poses, mesh {mesh_p.exists()} -> not used as GeneOH condition")
             continue
@@ -228,7 +228,7 @@ def optimise(hand, R0, hp0, T0, targets, w_t, obs, lead_trail, prior=None, iters
         vel = ((J[1:] - J[:-1]) ** 2).sum(-1).mean(-1)
         l_vel = (vel * torch.maximum(lt[1:], lt[:-1])).sum() / max(1.0, float(lt.sum())) / s_v ** 2
         l_prior = ((hp - hp_ref) ** 2).mean() / s_pr ** 2
-        return l_data + l_acc + l_pacc + l_vel + 0.1 * l_prior, dict(data=l_data.item(), acc=l_acc.item(),
+        return l_data + l_acc + l_pacc + l_vel + sig.get("prior_w", 0.1) * l_prior, dict(data=l_data.item(), acc=l_acc.item(),
                                                                     pacc=l_pacc.item(), vel=l_vel.item())
 
     for it in range(iters):
@@ -303,6 +303,9 @@ def main():
     ap.add_argument("--seeds", default="0")
     ap.add_argument("--contact_m", type=float, default=0.10, help="GeneOH only where the hand comes this close")
     ap.add_argument("--obj_points", type=int, default=3000)
+    ap.add_argument("--c_prior_sig", type=float, default=0.15,
+                    help="rad: stage C finger-pose prior to the input pose (was 0.5 x weight 0.1: 21 joints cannot pin finger twist, "
+                         "the joint-only refit twisted the fingers)")
     ap.add_argument("--no_geneoh", action="store_true", help="stage A only: optimiser fills undetected frames, detected frames kept as input")
     a = ap.parse_args()
     seeds = [int(s) for s in a.seeds.split(",")]
@@ -403,7 +406,7 @@ def main():
             wt = np.where(obs, 1.0, 0.25)
             log(f"[{side}] stage C (fit to GeneOH joints)")
             RC, hpC, TC, JC, _ = optimise(hand, RA, hpA, TA, tgt, wt, obs, lead_trail, prior=hpA, iters=1500,
-                                          sig={"data": 0.006})
+                                          sig={"data": 0.006, "pose_prior": a.c_prior_sig, "prior_w": 1.0})
         else:
             RC, hpC, TC, JC = RA.copy(), hpA.copy(), TA.copy(), JA.copy()
         if a.no_geneoh:  # detected frames keep their input pose exactly (joint-only refits twist the fingers)

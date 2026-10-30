@@ -140,7 +140,7 @@ def main():
             nm = o["name"]
             pd = run / a.variant / nm / "poses"
             W = {t: slam[t] @ load_T(pd / f"{t:06d}.json") for t in slam if (pd / f"{t:06d}.json").exists()}
-            mesh = trimesh.load(ROOT / "meshes_obj" / nm / f"{nm}.obj", force="mesh")
+            mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj", force="mesh")
             sdf = SDFGrid(mesh, res=160, device=dev)
             m, com, I = urdf_inertial(nm)
             held = sorted(set().union(*[set(v) for v in rep.get(nm, {}).get("hand_contact", {}).values()] or [set()]))

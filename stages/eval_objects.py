@@ -260,7 +260,7 @@ def main():
         per_obj, Vs = {}, {}
         for nm in names:
             Ms, sc = est[nm]
-            mesh = trimesh.load(ROOT / "meshes_obj" / nm / f"{nm}.obj", force="mesh")
+            mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj", force="mesh")
             V = mesh.vertices[np.random.default_rng(0).choice(len(mesh.vertices), min(2000, len(mesh.vertices)), False)]
             Vs[nm] = V
             te, re, add, adds, pos_est, pos_gt = [], [], [], [], [], []

@@ -24,7 +24,7 @@ for r in sys.argv[1:]:
     tp = json.loads((run / "table_plane.json").read_text()); up, h0 = np.array(tp["up"]), float(tp["height"])
     rep = json.loads((run / "fusion_report.json").read_text()); gt = json.loads((run / "gt_world.json").read_text())["objects"]
     for o in json.loads((run / "objects_sam3/objects.json").read_text()):
-        nm = o["name"]; V = trimesh.load(ROOT / "meshes_obj" / nm / f"{nm}.obj", force="mesh").vertices
+        nm = o["name"]; V = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj", force="mesh").vertices
         hc = [t for fr in rep.get(nm, {}).get("hand_contact", {}).values() for t in fr]
         first = min(hc) if hc else len(slam)
         fr = [t for t in range(0, max(first - 3, 0)) if t in slam]

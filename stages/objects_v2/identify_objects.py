@@ -115,7 +115,7 @@ def main():
     a = ap.parse_args()
     mesh_ext = {}
     for nm in list(PROMPTS) + PAIR["wooden_board"]:
-        mp = ROOT / "meshes_obj" / nm / f"{nm}.obj"
+        mp = ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj"
         if mp.exists():
             mesh_ext[nm] = obj_extents(mp)
     mesh_ext["wooden_board"] = mesh_ext["wooden_piece_1"]

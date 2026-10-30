@@ -1,0 +1,23 @@
+Bootstrap: docker
+From: pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel
+
+# Dyn-HaMR (github.com/ZhengdiYu/Dyn-HaMR @ fa9cd74, MIT; HaMeR/ViTPose/HMP/MANO under their own terms) runtime.
+# Code stays on scratch (third_party/Dyn-HaMR incl. third-party/hamer + ViTPose); PYTHONPATH set at run time.
+# No SLAM build: our calibrated SLAM camera poses are given through cameras.npz.
+%files
+    /scratch/kghasemz/v2d/third_party/Dyn-HaMR/requirements.txt /opt/dyn_requirements.txt
+    /scratch/kghasemz/v2d/third_party/Dyn-HaMR/third-party/hamer/setup.py /opt/hamer_setup.py
+
+%post
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y --no-install-recommends git libgl1 libglib2.0-0 libegl1 libgles2 ffmpeg && rm -rf /var/lib/apt/lists/*
+    python -V
+    python -c "import torch, torchvision; print(f\"torch=={torch.__version__.split('+')[0]}\\ntorchvision=={torchvision.__version__.split('+')[0]}\")" > /opt/pin.txt; echo "numpy==1.23.5" >> /opt/pin.txt; cat /opt/pin.txt
+    pip install --no-cache-dir -c /opt/pin.txt -r /opt/dyn_requirements.txt
+    # HaMeR runtime deps (its setup.py install_requires, without the editable install)
+    pip install --no-cache-dir -c /opt/pin.txt pytorch-lightning==1.9.5 yacs smplx==0.1.28 trimesh webdataset gdown pyrender chumpy
+    python -c "import torch, mmcv, hydra, smplx, ultralytics; print('torch', torch.__version__, torch.version.cuda, 'mmcv', mmcv.__version__)"
+
+%environment
+    export PYOPENGL_PLATFORM=egl

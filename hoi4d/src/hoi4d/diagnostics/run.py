@@ -7,6 +7,7 @@ hand triangulation/2D; stereo/wrench_feasibility.py; stereo/physics_check.py --s
 """
 from __future__ import annotations
 
+import os
 import json
 from pathlib import Path
 
@@ -37,7 +38,7 @@ def symmetry_group(run_name, name):
             import sys
             sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "stereo"))
             from symmetry import mesh_symmetry
-            return [np.asarray(g) for g in mesh_symmetry(hio.ROOT / "meshes_obj" / name / f"{name}.obj")["group"]]
+            return [np.asarray(g) for g in mesh_symmetry(hio.ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj")["group"]]
     return None
 
 

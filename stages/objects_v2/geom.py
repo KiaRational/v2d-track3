@@ -63,6 +63,36 @@ def robust_extent(P, lo=5, hi=95):
     return np.sort(e)[::-1]
 
 
+# Size-free mode (mesh_ext None): no object model at all -- used to segment the episodes BEFORE any mesh exists, so
+# the masks our meshes are reconstructed from do not depend on the provided scans. Only physically impossible
+# hand-held-object sizes are rejected (a table / background mask); every plausible mask fits equally (fit 1).
+FREE_DIAG = 0.45      # m, clean_mask neighbourhood when there is no mesh diagonal
+FREE_MAX_EXT = 0.55   # m, largest extent a manipulated tabletop object can show
+
+
+def size_free_check(mask, depth, K, rec):
+    core = mask
+    if cv2 is not None and mask.sum() > 600:
+        core = cv2.erode(mask.astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
+        if core.sum() < 150:
+            core = mask
+    P = backproject(core, depth, K)
+    rec["n_depth"] = int(len(P))
+    if len(P) < 50:
+        rec["reason"] = "no_depth"
+        rec["ok"], rec["fit"] = True, 0.5
+        return rec
+    c = np.median(P, 0)
+    P = P[np.linalg.norm(P - c, axis=1) < FREE_DIAG]
+    e = robust_extent(P) if len(P) >= 30 else np.zeros(3)
+    rec.update(ext=e.tolist(), center=c.tolist())
+    if e[0] > FREE_MAX_EXT:
+        rec["reason"] = "too_large"
+    else:
+        rec["ok"], rec["fit"] = True, 1.0
+    return rec
+
+
 def depth_components(mask, depth, rel=0.03, abs_m=0.015):
     """Label mask pixels into surface-connected components (4-neighbours whose
     depth differs by < max(abs_m, rel*z)); pixels without depth get label 0."""
@@ -92,7 +122,7 @@ def clean_mask(mask, depth, K, mesh_ext, min_px=150):
     sizes = np.bincount(lab.ravel(), minlength=n)
     sizes[0] = 0
     order = np.argsort(-sizes)
-    diag = float(np.linalg.norm(mesh_ext))
+    diag = float(np.linalg.norm(mesh_ext)) if mesh_ext is not None else FREE_DIAG
     main = order[0]
     c0 = np.median(backproject(lab == main, depth, K, 800), 0)
     keep = np.zeros(n, bool)
@@ -118,6 +148,8 @@ def geometry_check(mask, depth, K, mesh_ext, min_px=150):
     if n_px < min_px:
         rec["reason"] = "empty"
         return rec
+    if mesh_ext is None:
+        return size_free_check(mask, depth, K, rec)
     me = np.sort(np.asarray(mesh_ext))[::-1]
     diag = float(np.linalg.norm(me))
     # Silhouette pixels carry mixed foreground/background stereo depth: erode first,

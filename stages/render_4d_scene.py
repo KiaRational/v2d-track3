@@ -215,7 +215,7 @@ def main():
         if not pd.is_dir():
             pd = run / args.obj_dir / o["name"] / "poses_smoothed"
             print(f"{o['name']}: no {args.objects}, falling back to {pd}", flush=True)
-        m = trimesh.load(ROOT / "meshes_obj" / o["name"] / f"{o['name']}.obj", force="mesh")
+        m = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / o["name"] / f"{o['name']}.obj", force="mesh")
         objs.append({"name": o["name"], "id": o["id"], "dir": pd, "v": np.asarray(m.vertices, np.float32),
                      "f": np.asarray(m.faces), "c": mesh_colours(m)})
     gt = {}

@@ -99,7 +99,7 @@ def load_T(p):
 
 def object_graph(name, n_verts):
     import fast_simplification
-    m = trimesh.load(ROOT / "meshes_obj" / name / f"{name}.obj", force="mesh")
+    m = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj", force="mesh")
     m.merge_vertices()
     if len(m.vertices) > n_verts:
         v, f = fast_simplification.simplify(m.vertices, m.faces, target_reduction=1 - n_verts / len(m.vertices))
@@ -154,7 +154,7 @@ def main():
             tmpl = torch.tensor((V - c) / s, device=dev)
             pd = run / a.variant / nm / "poses"
             W = {t: load_T(pd / f"{t:06d}.json") for t in range(n) if (pd / f"{t:06d}.json").exists()}
-            S = trimesh.sample.sample_surface(trimesh.load(ROOT / "meshes_obj" / nm / f"{nm}.obj", force="mesh"),
+            S = trimesh.sample.sample_surface(trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj", force="mesh"),
                                               20000, seed=0)[0]
             tree = cKDTree(S)
             # frames with a hand near the object (where contact can happen), in batches

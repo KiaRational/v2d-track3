@@ -30,7 +30,7 @@ def main():
     ap.add_argument("name")
     ap.add_argument("--mass", type=float, default=0.3)
     a = ap.parse_args()
-    src = ROOT / "meshes_obj" / a.name / f"{a.name}.obj"
+    src = ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / a.name / f"{a.name}.obj"
     m = trimesh.load(src, force="mesh")
     com, I = shell_inertia(m, a.mass)
     out = ROOT / "urdf_extra"

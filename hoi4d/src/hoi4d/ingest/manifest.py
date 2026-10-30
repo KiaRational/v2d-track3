@@ -12,6 +12,7 @@ T_world_cam (F,4,4) is stored so parameters can be mapped exactly when needed.
 """
 from __future__ import annotations
 
+import os
 import json
 from pathlib import Path
 
@@ -56,11 +57,11 @@ def world_alignment(tp: dict) -> np.ndarray:
 
 def entity_registry(run: Path, objects: list[str]) -> list[dict]:
     ents = []
-    oj = run / "objects_sam3/objects.json"
+    oj = run / hio.obj_dir() / "objects.json"
     ids = {o["name"]: o["id"] for o in json.loads(oj.read_text())} if oj.exists() else {}
     for n in objects:
         ents.append({"id": n, "kind": "rigid_object", "label": n.replace("_", " "), "mask_id": ids.get(n),
-                     "mesh": str(ROOT / "meshes_obj" / n / f"{n}.obj"), "views": ["ego_cam_a"],
+                     "mesh": str(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / n / f"{n}.obj"), "views": ["ego_cam_a"],
                      "stereo_association": "depth reprojected into ego_cam_a (pixel-aligned); no separate b/c masks"})
     for side, mid in (("right", 3), ("left", 2)):
         ents.append({"id": f"hand_{side}", "kind": "hand", "label": f"{side} hand", "mask_id": mid,
@@ -149,8 +150,8 @@ def build_initial(run_name: str, cfg: dict, man: dict, T_wc: np.ndarray) -> hio.
                 continue
             d = json.loads(p.read_text())
             T[i] = T_wc[i] @ _T(np.asarray(d["R"]), d["T"])
-            has_fp = (run / "objects_sam3" / nm / "poses" / f"{i:06d}.json").exists()
-            has_icp = (run / "objects_sam3" / nm / "stereo_icp" / f"{i:06d}.json").exists()
+            has_fp = (run / hio.obj_dir() / nm / "poses" / f"{i:06d}.json").exists()
+            has_icp = (run / hio.obj_dir() / nm / "stereo_icp" / f"{i:06d}.json").exists()
             src[i] = C.SOURCE_IDS["fused"] if (has_fp or has_icp) else C.SOURCE_IDS["interpolated"]
         valid = np.isfinite(T).all(axis=(1, 2))
         # re-orthonormalise (JSON round-off)

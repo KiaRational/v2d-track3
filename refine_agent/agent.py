@@ -39,17 +39,29 @@ sys.path.insert(0, str(HERE))
 import verify  # noqa: E402
 
 ROOT = Path(os.environ["V2D_ROOT"])
-CAL = json.loads((HERE / "critic_calibration.json").read_text())
+# compliant tree (V2D_CRITIC=uncalibrated): the mocap-fitted calibration files are never read
+_UNCAL = os.environ.get("V2D_CRITIC") == "uncalibrated"
+CAL = None if _UNCAL else json.loads((HERE / "critic_calibration.json").read_text())
 # leave-one-episode-out fits (validate_critic.py --fit): on a public episode the agent must not use a
 # critic that was fitted on that episode's mocap
 _LOEO = HERE / "critic_calibration_loeo.json"
-CAL_LOEO = json.loads(_LOEO.read_text()) if _LOEO.exists() else {}
-ENV = {**os.environ, "V2D_OBJ_DIR": "objects_sam3"}
+CAL_LOEO = json.loads(_LOEO.read_text()) if _LOEO.exists() and not _UNCAL else {}
+ENV = {**os.environ, "V2D_OBJ_DIR": os.environ.get("V2D_OBJ_DIR", "objects_sam3")}
 MISSING_P = 1.0  # error probability of a frame the critic cannot score (no depth / mask evidence, or no pose)
+
+
+# V2D_CRITIC=uncalibrated (compliant tree): the critic must not carry weights fitted on public mocap. Same three
+# observation features, equal fixed weights; acceptance only compares before/after, so the scale is immaterial.
+UNCALIBRATED = {"features": ["free_space", "depth_agree", "mask_iou"], "transform": ["x", "1-x", "1-x"],
+                "coef": [2.0, 2.0, 2.0], "intercept": -2.0, "source": "fixed equal weights (no mocap fit)"}
+if _UNCAL:
+    CAL = UNCALIBRATED
 
 
 def calibration(run_name):
     """The critic calibration for one episode: its LOEO fit when there is one, the full fit otherwise."""
+    if os.environ.get("V2D_CRITIC") == "uncalibrated":
+        return UNCALIBRATED
     e = CAL_LOEO.get("episodes", {}).get(run_name)
     if e is None:
         return CAL

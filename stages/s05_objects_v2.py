@@ -81,6 +81,9 @@ def main():
     ap.add_argument("--segmenter", choices=["sam2_gdino", "sam3"], default="sam2_gdino")
     ap.add_argument("--sam3_weights", default=str(W / "sam3"), help="local facebook/sam3 snapshot (gated)")
     ap.add_argument("--no_viz", action="store_true")
+    ap.add_argument("--masks_only", action="store_true",
+                    help="segmentation only, no mesh read (size-free validation), no FoundationPose: the masks our own "
+                         "meshes are reconstructed from")
     args = ap.parse_args()
     run = ROOT / "runs" / args.run
     meta = json.loads((run / "episode.json").read_text())
@@ -104,9 +107,12 @@ def main():
     # 2) SAM2 tracking with geometric validation and re-prompting
     objs = []
     for k, nm in enumerate(names):
-        mesh = ROOT / "meshes_obj" / nm / f"{nm}.obj"
-        o = {"id": OBJECT_IDS[k], "name": nm, "mesh": str(mesh),
-             "mesh_ext": trimesh.load(mesh, force="mesh").extents.tolist()}
+        if args.masks_only:     # size-free segmentation: no mesh of any kind is read
+            o = {"id": OBJECT_IDS[k], "name": nm, "mesh": None, "mesh_ext": None}
+        else:
+            mesh = ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / nm / f"{nm}.obj"
+            o = {"id": OBJECT_IDS[k], "name": nm, "mesh": str(mesh),
+                 "mesh_ext": trimesh.load(mesh, force="mesh").extents.tolist()}
         objs.append(o)
     hand_prompts = [p for p in json.loads((recon / "sam2_prompts.json").read_text())["prompts"]
                     if p["object_id"] in (2, 3)]
@@ -125,6 +131,11 @@ def main():
         container("v2d_sam2" if args.segmenter == "sam2_gdino" else "sam3", "sam2_driver.py",
                   ["--cfg", work / "sam2_driver_cfg.json"])
     rep = json.loads(report.read_text())
+    if args.masks_only:
+        (work / "objects.json").write_text(json.dumps(
+            [{"id": o["id"], "name": o["name"], "ref_frame": rep.get("ref_frames", {}).get(o["name"])} for o in objs], indent=2))
+        print(f"masks only: {[o['name'] for o in objs]}", flush=True)
+        return
 
     # 3) FoundationPose + EKF per object on metric stereo depth. Objects whose meshes
     #    are the same size (the two wooden boards) get their identity decided by

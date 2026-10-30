@@ -13,6 +13,7 @@ the URDF's collision mesh. Writes <dst>/ego_recon/processed/collision_parts/<obj
 <dst>/.../<obj>_rigid.urdf (copied from <src>, inertial kept) with one <collision> element per piece.
 Usage: python fine_collision.py <src_hmd_root> <dst_hmd_root> [threshold=0.02]
 """
+import os
 import re
 import shutil
 import sys
@@ -25,6 +26,27 @@ from flash_chord.assets.mesh import convex_decompose
 
 PROVIDED = Path("/scratch/kghasemz/v2d/data/track_3/public/mesh")
 CACHE = "/scratch/kghasemz/v2d/cache/coacd_fc"
+import os
+SHELL = float(os.environ.get("SHELL_MM", "0")) / 1000.0  # >0: walls-only collision (shell thickness ~ this)
+
+
+def shell_of(mesh, t):
+    """Thin watertight shell (~t thick) around the surface: surface voxels at pitch t, marching cubes, then the
+    shell's own surface. Unlike the mesh's solid outline, its convex pieces never cover an opening."""
+    vox = mesh.voxelized(pitch=t)          # surface voxels only (not filled)
+    sh = vox.marching_cubes                # in voxel index space
+    sh.apply_transform(vox.transform)
+    if len(sh.faces):   # keep the largest face-connected component (trimesh's split() needs networkx: not in the image)
+        from scipy.sparse import coo_matrix
+        from scipy.sparse.csgraph import connected_components
+        adj = sh.face_adjacency
+        nf = len(sh.faces)
+        g = coo_matrix((np.ones(len(adj)), (adj[:, 0], adj[:, 1])), shape=(nf, nf))
+        _, lab = connected_components(g, directed=False)
+        keep = lab == np.bincount(lab).argmax()
+        sh.update_faces(keep)
+        sh.remove_unreferenced_vertices()
+    return sh
 
 
 def main():
@@ -46,7 +68,11 @@ def main():
         m = re.search(r"<collision>.*?filename=\"([^\"]+)\"", txt, re.S)
         mp = Path(m.group(1)); mp = mp if mp.is_absolute() else (u.parent / mp).resolve()
         prov = PROVIDED / name / f"{name}_collision.glb"
+        if os.environ.get("V2D_PROVIDED_COLLISION", "all") == "none":   # compliant tree: never the provided mesh
+            prov = Path("/nonexistent")
         mesh = trimesh.load(prov if prov.exists() else mp, force="mesh")
+        if SHELL > 0:  # walls only: a thin solid shell around the surface, so openings (pot mouth, rack slots) stay empty
+            mesh = shell_of(mesh, SHELL)
         hulls = convex_decompose(np.asarray(mesh.vertices), np.asarray(mesh.faces), threshold=th, cache_dir=CACHE)
         od = dp / "collision_parts" / name
         shutil.rmtree(od, ignore_errors=True); od.mkdir(parents=True)

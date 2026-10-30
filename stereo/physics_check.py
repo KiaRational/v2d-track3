@@ -39,7 +39,7 @@ BONES = [(0, 1), (1, 2), (2, 3), (3, 4), (5, 6), (6, 7), (7, 8), (9, 10), (10, 1
 # MANO finger radii (thumb ~9 mm, fingers ~7.5 mm, palm slab ~11 mm): fatter capsules would add
 # penetration that the reconstruction does not have
 RADIUS = [0.009] * 4 + [0.0075] * 12 + [0.011] * 5
-CACHE = ROOT / "cache/coacd"
+CACHE = ROOT / ("cache/coacd" + {"meshes_obj": ""}.get(os.environ.get("V2D_MESH_DIR", "meshes_obj"), "_" + os.environ.get("V2D_MESH_DIR", "")))  # per mesh set
 
 
 def load_T(p):
@@ -61,7 +61,7 @@ def convex_parts(name):
     if parts:
         return parts
     d.mkdir(parents=True, exist_ok=True)
-    m = trimesh.load(ROOT / "meshes_obj" / name / f"{name}.obj", force="mesh")
+    m = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj", force="mesh")
     res = coacd.run_coacd(coacd.Mesh(m.vertices, m.faces), threshold=0.04, max_convex_hull=24)
     for i, (v, f) in enumerate(res):
         trimesh.Trimesh(v, f).export(d / f"part_{i:02d}.obj")
@@ -207,7 +207,7 @@ def main():
             W = {t: slam[t] @ load_T(pd / f"{t:06d}.json") for t in ts if (pd / f"{t:06d}.json").exists()}
             if not W:
                 continue
-            m = trimesh.load(ROOT / "meshes_obj" / o["name"] / f"{o['name']}.obj", force="mesh")
+            m = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / o["name"] / f"{o['name']}.obj", force="mesh")
             objs.append({"name": o["name"], "W": W, "W0": W[min(W)], "parts": convex_parts(o["name"]),
                          "V": np.asarray(m.vertices)})
         low = [((o["V"] @ o["W0"][:3, :3].T + o["W0"][:3, 3]) @ up).min() for o in objs]

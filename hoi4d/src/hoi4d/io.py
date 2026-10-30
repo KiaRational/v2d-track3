@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -22,8 +23,14 @@ from . import conventions as C
 ROOT = Path("/scratch/kghasemz/v2d")
 
 
+def obj_dir() -> str:
+    """Per-run object segmentation/pose directory (masks/<id>, objects.json): V2D_OBJ_DIR (compliant tree:
+    objects_recon -- SAM 3 masks validated against OUR meshes), default objects_sam3 (public-mesh development tree)."""
+    return os.environ.get("V2D_OBJ_DIR", "objects_sam3")
+
+
 def out_dir(run: str) -> Path:
-    d = ROOT / "runs" / run / "hoi4d"
+    d = ROOT / "runs" / run / os.environ.get("HOI4D_DIR", "hoi4d")   # HOI4D_DIR: a parallel reconstruction (e.g. compliant rebuild)
     d.mkdir(parents=True, exist_ok=True)
     return d
 

@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import warnings
 from pathlib import Path
 
@@ -142,7 +143,7 @@ def contact_and_visibility(run, obj_id, name, n, K, fp_dir, radius=0.02, min_pts
     """Per frame: 3D hand-object contact (>= min_pts stereo-depth points of a SAM2 hand
     mask lie within `radius` of the object surface placed at its FP pose) and the
     object's visible-area fraction (mask area / its 90th-percentile area)."""
-    mesh = trimesh.load(ROOT / "meshes_obj" / name / f"{name}.obj", force="mesh")
+    mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj", force="mesh")
     pts = trimesh.sample.sample_surface(mesh, 3000, seed=0)[0]
     touch, area = np.zeros(n, bool), np.zeros(n)
     rng = np.random.default_rng(0)
@@ -179,22 +180,32 @@ def contact_and_visibility(run, obj_id, name, n, K, fp_dir, radius=0.02, min_pts
 PALM = [0, 5, 9, 13, 17]  # wrist + finger MCPs: the (nearly) rigid part of the hand
 
 
-def stereo_hands(run, n):
-    """Stereo-triangulated hands (Stage 6b): per side joints (n,21,3) camera frame,
-    per-joint confidence (n,21) and the palm's rigid pose H (n,4,4) camera<-palm, with
-    the palm template = the median-shaped frame of the sequence."""
+def stereo_hands(run, n, variant=None):
+    """Hands for contact and hand-follow: per side joints (n,21,3) camera frame, per-joint confidence (n,21)
+    and the palm's rigid pose H (n,4,4) camera<-palm, with the palm template = the median-shaped frame of the
+    sequence. Source: the MANO hands variant `variant` (<run>/stereo/<variant>/<side>/NNNNNN.json, e.g. hands_c:
+    temporally smooth, so a held object does not inherit palm jitter) if given and present, else the
+    stereo-triangulated hands (Stage 6b, hands_tri.json; per-frame palm rotation noise ~8 deg/frame)."""
+    vd = run / "stereo" / variant if variant else None
     f = run / "stereo/hands_tri.json"
-    if not f.exists():
-        return {}
-    d = json.loads(f.read_text())
+    if vd is None or not vd.is_dir():
+        if not f.exists():
+            return {}
+        d = json.loads(f.read_text())
     out = {}
     for side in ("left", "right"):
         J, C = np.full((n, 21, 3), np.nan), np.zeros((n, 21))
-        for t, X in d.get(side, {}).get("X_smooth", {}).items():
-            if int(t) < n:
-                J[int(t)] = X
-                c = d[side].get("conf", {}).get(t)
-                C[int(t)] = c if c is not None else 1.0
+        if vd is not None and vd.is_dir():
+            for p in (vd / side).glob("[0-9]*.json"):
+                t, r = int(p.stem), json.loads(p.read_text())
+                if t < n and r.get("joints") is not None:
+                    J[t], C[t] = r["joints"], 1.0
+        else:
+            for t, X in d.get(side, {}).get("X_smooth", {}).items():
+                if int(t) < n:
+                    J[int(t)] = X
+                    c = d[side].get("conf", {}).get(t)
+                    C[int(t)] = c if c is not None else 1.0
         ok = np.isfinite(J[:, 0, 0])
         if ok.sum() < 5:
             continue
@@ -211,10 +222,84 @@ def stereo_hands(run, n):
     return out
 
 
-def hand_follow(hands, fp_dir, name, slam, n, radius=0.025, min_joints=2):
-    """Per frame the hand whose joints touch the object (at its FP pose), and follow
-    transitions (t, D = H_{t+1} H_t^-1 in the world, weight = palm confidence)."""
-    mesh = trimesh.load(ROOT / "meshes_obj" / name / f"{name}.obj", force="mesh")
+def mask_contact(run, obj_id, hands, K, n, dil=10, win=15, dz=0.04, min_joints=2, near_px=80):
+    """Pose-free hand-object evidence per frame and side, from the object's SAM mask:
+    contact[t] = sides with >= min_joints confident stereo joints projecting into the (dil-dilated) mask
+    within dz of the object's own stereo depth around that pixel;
+    near[t][side] = True if any confident joint projects within near_px of the mask, False if the hand is
+    visible but away from it, None if unknown (no mask / no hand) -- the release evidence for grasp_bridge.
+    The FP-pose test in hand_follow fails exactly while a hand covers the object (FP jumps), which made the
+    fusion treat a carried object as resting and freeze it; the mask stays valid there."""
+    out, near = [set() for _ in range(n)], [{} for _ in range(n)]
+    ker = np.ones((2 * dil + 1, 2 * dil + 1), np.uint8)
+    kn = np.ones((2 * near_px + 1, 2 * near_px + 1), np.uint8)
+    for t in range(n):
+        if not any(np.isfinite(h["J"][t, 0, 0]) for h in hands.values()):
+            continue
+        mo = cv2.imread(str(run / f"{OBJ}/masks/{obj_id}/{t:06d}.png"), cv2.IMREAD_GRAYSCALE)
+        dp = run / f"depth_stereo/{t:06d}.png"
+        if mo is None or not (mo > 0).any():
+            continue
+        m = mo > 0
+        md = cv2.dilate(m.astype(np.uint8), ker) > 0
+        mn = cv2.dilate(m.astype(np.uint8), kn) > 0
+        depth = decode_depth(dp) if dp.exists() else None
+        Hh, Ww = m.shape
+        for side, h in hands.items():
+            J, C = h["J"][t], h["C"][t]
+            if not np.isfinite(J[0, 0]):
+                continue
+            k = kn_ = 0
+            for X, c in zip(J, C):
+                if c <= 0.25 or X[2] <= 0.05:
+                    continue
+                u, v = int(round(K[0, 0] * X[0] / X[2] + K[0, 2])), int(round(K[1, 1] * X[1] / X[2] + K[1, 2]))
+                if not (0 <= u < Ww and 0 <= v < Hh):
+                    continue
+                kn_ += bool(mn[v, u])
+                if not md[v, u] or depth is None:
+                    continue
+                sl = (slice(max(0, v - win), v + win + 1), slice(max(0, u - win), u + win + 1))
+                zo = depth[sl][m[sl] & (depth[sl] > 0)]
+                if len(zo) >= 5 and abs(np.median(zo) - X[2]) < dz:
+                    k += 1
+            if k >= min_joints:
+                out[t].add(side)
+            near[t][side] = kn_ >= 1
+    return out, near
+
+
+def grasp_bridge(side_at, near, max_gap=120, release_run=3):
+    """Grasp persistence: a hand that holds the object before and after a gap in detected contact keeps
+    holding it through the gap unless there is release evidence -- >= release_run consecutive frames in the
+    gap where that hand is visible but away from the object's mask (near is False; a single frame is mask
+    jitter). Fast motion (blur) and the hand covering a small object break the per-frame contact tests, not
+    the grasp. Returns the bridged side_at and the bridged frames per side."""
+    side_at = [tuple(x) for x in side_at]
+    bridged = {}
+
+    def released(sd, a, b):
+        k = 0
+        for t in range(a + 1, b):
+            k = k + 1 if near[t].get(sd) is False else 0
+            if k >= release_run:
+                return True
+        return False
+    for sd in {s for x in side_at for s in x}:
+        on = [t for t, x in enumerate(side_at) if sd in x]
+        for a, b in zip(on, on[1:]):
+            if 1 < b - a <= max_gap and not released(sd, a, b):
+                for t in range(a + 1, b):
+                    side_at[t] = side_at[t] + (sd,)
+                bridged.setdefault(sd, []).extend(range(a + 1, b))
+    return side_at, bridged
+
+
+def hand_follow(hands, fp_dir, name, slam, n, radius=0.025, min_joints=2, mask=None):
+    """Per frame the hands whose joints touch the object (at its FP pose, or by the pose-free mask test of
+    mask_contact; `mask` = its (contact, near) output, which also bridges grasp gaps via grasp_bridge), and
+    follow transitions (t, D = H_{t+1} H_t^-1 in the world, weight = palm confidence)."""
+    mesh = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj", force="mesh")
     tree_pts = trimesh.sample.sample_surface(mesh, 3000, seed=0)[0]
     side_at = [tuple() for _ in range(n)]
     for t in range(n):
@@ -231,7 +316,12 @@ def hand_follow(hands, fp_dir, name, slam, n, radius=0.025, min_joints=2):
             k = int(((d < radius) & (h["C"][t] > 0.25)).sum())
             if k >= min_joints:
                 touching.append(side)
+        if mask is not None:
+            touching += [s for s in sorted(mask[0][t]) if s not in touching]
         side_at[t] = tuple(touching)
+    bridged = {}
+    if mask is not None:
+        side_at, bridged = grasp_bridge(side_at, mask[1])
     follow = []
     for t in range(n - 1):
         if t not in slam or t + 1 not in slam:
@@ -244,7 +334,7 @@ def hand_follow(hands, fp_dir, name, slam, n, radius=0.025, min_joints=2):
             Hw0, Hw1 = slam[t] @ H[t], slam[t + 1] @ H[t + 1]
             w = float(min(hands[s]["C"][t, PALM].mean(), hands[s]["C"][t + 1, PALM].mean())) / len(shared)
             follow.append((t, Hw1 @ np.linalg.inv(Hw0), w))
-    return side_at, follow
+    return side_at, follow, bridged
 
 
 def grasp_segments(hands, side_at, slam, n, min_len=4):
@@ -369,6 +459,27 @@ def retime(meas_list, shift, slam):
     return out
 
 
+def gate_rotations(ms, thr_deg, win=7):
+    """Drop the ROTATION weight (keep translation) of measurements whose rotation is > thr_deg from the rotation
+    medoid of the measurements within +-win frames: one-frame / short pose flips that the robust loss alone still
+    follows. Real fast turns are kept -- the neighbours agree with them. Returns (measurements, n_gated)."""
+    if len(ms) < 5:
+        return ms, 0
+    ts = np.array([m_[0] for m_ in ms]); Rs = np.array([m_[1][:3, :3] for m_ in ms])
+    out, ng = [], 0
+    for i, (t, T_, w_) in enumerate(ms):
+        nb = np.where(np.abs(ts - t) <= win)[0]
+        if len(nb) >= 4:
+            tr = np.einsum("aij,bij->ab", Rs[nb], Rs[nb])
+            A = np.degrees(np.arccos(np.clip((tr - 1) / 2, -1, 1)))
+            med = Rs[nb[np.argmin(A.sum(1))]]
+            if np.degrees(np.arccos(np.clip((np.trace(T_[:3, :3] @ med.T) - 1) / 2, -1, 1))) > thr_deg:
+                w_ = (w_[0], 0.0) if isinstance(w_, tuple) else (w_, 0.0)
+                ng += 1
+        out.append((t, T_, w_))
+    return out, ng
+
+
 def write(dirp, t, T):
     dirp.mkdir(parents=True, exist_ok=True)
     (dirp / f"{t:06d}.json").write_text(json.dumps({"R": T[:3, :3].tolist(), "T": T[:3, 3].tolist()}))
@@ -407,6 +518,14 @@ def main():
                          "icp_extra: <dir under the object dir, e.g. stereo_icp_agent>, static: [[a, b, w]]}}")
     ap.add_argument("--out_variant", default=None, help="write only fused_all, to this variant dir (agent trials)")
     ap.add_argument("--only_objects", nargs="*", default=None)
+    ap.add_argument("--hands", default=os.environ.get("V2D_FUSE_HANDS", "hands_c"),
+                    help="MANO hands variant for contact + hand-follow (stereo/<hands>/<side>); falls back to the "
+                         "stereo-triangulated hands_tri.json if absent; \"\" = always hands_tri")
+    ap.add_argument("--fp_rot_gate", type=float, default=25.0,
+                    help="deg: drop FP rotation weight where it is this far from its +-7-frame medoid (0 = off)")
+    ap.add_argument("--mask_contact", action="store_true",
+                    help="EXPERIMENTAL (off: dragged a static dish rack 10 cm in review): add pose-free mask+depth "
+                         "contact + grasp bridging (mask_contact) to the FP-pose contact")
     ap.add_argument("--only_global", action="store_true",
                     help="with --w_global: only compute fused_global (existing variants/icp/report untouched)")
     a = ap.parse_args()
@@ -421,7 +540,7 @@ def main():
         n = max(slam) + 1
         ki = json.loads((run / "recon_hawor/intrinsics_stable.json").read_text())
         K = np.array([[ki["fx"], 0, ki["cx"]], [0, ki["fy"], ki["cy"]], [0, 0, 1.0]])
-        hands = stereo_hands(run, n)
+        hands = stereo_hands(run, n, a.hands or None)
         if a.icp_time_shift == "auto":
             ht = run / "stereo/hands_tri.json"
             icp_shift = -float(json.loads(ht.read_text()).get("sync_offset_frac") or 0.0) if ht.exists() else 0.0
@@ -442,7 +561,8 @@ def main():
             else:
                 near, vis, touch = contact_and_visibility(run, o["id"], name, n, K, od / a.fp_source)
                 np.savez(cache, near=near, vis=vis, touch=touch)
-            side_at, follow = hand_follow(hands, od / a.fp_source, name, slam, n)
+            mc = None if not a.mask_contact or not hands else mask_contact(run, o["id"], hands, K, n)
+            side_at, follow, bridged = hand_follow(hands, od / a.fp_source, name, slam, n, mask=mc)
             touch_h = np.array([bool(x) for x in side_at])
             near = near | (np.convolve(touch_h.astype(float), np.ones(5), "same") > 0)
             segs = grasp_segments(hands, side_at, slam, n)
@@ -499,10 +619,15 @@ def main():
                     if h["score"] >= 0.75 and h["iou"] >= 0.6:
                         sg.append((t, slam[t] @ np.array(h["T"]), a.w_global * h["score"] ** 2))
                 meas["global"] = sg
-            sym = mesh_symmetry(ROOT / "meshes_obj" / name / f"{name}.obj")
+            sym = mesh_symmetry(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj")
             # one merged, time-sorted pass with a shared reference: all sources on one branch
             meas, n_ch = canon_measurements(meas, sym)
             fp, icp = meas["fp"], meas["icp"]
+            if a.fp_rot_gate > 0:   # isolated FoundationPose rotation flips (thin spoon: 47-100 jumps > 10 deg/frame)
+                fp, n_gated = gate_rotations(fp, a.fp_rot_gate)
+                meas["fp"] = fp
+            else:
+                n_gated = 0
             # contact is not carrying: the grasp transform (and hand-follow) only once the object itself moves
             carry_log = []
             if a.carry_move_mm > 0 and segs:
@@ -512,6 +637,11 @@ def main():
                     held[g["frames"]] = True
                 carried = {(g["side"], t) for g in segs for t in g["frames"]}
                 follow = [f_ for f_ in follow if any((sd, f_[0]) in carried and (sd, f_[0] + 1) in carried for sd in hands)]
+            # trust per frame for the grasp transform's initial value: the object clearly seen (visible mask
+            # area >= 60 % of its usual) AND a gated stereo-ICP fit -- not the hand-covered, blurred frames
+            icp_ok = {t for t, _, _ in icp}
+            for g in segs:
+                g["trust"] = {t: float(vis[t] >= 0.6 and t in icp_ok) for t in g["frames"]}
             axis = sym["cont_axis"]
             # Velocity damping: `free` where no hand is near, gated by table support + slow
             # observed (canonical FP) motion -- no visible hand alone is not evidence of rest;
@@ -521,14 +651,14 @@ def main():
             tp = json.loads(plane.read_text()) if plane.exists() else None
             if tp is None:
                 print(f"WARNING {r} {name}: no table_plane.json, free damping not support-gated", flush=True)
-            verts = trimesh.load(ROOT / "meshes_obj" / name / f"{name}.obj", force="mesh").vertices
+            verts = trimesh.load(ROOT / os.environ.get("V2D_MESH_DIR", "meshes_obj") / name / f"{name}.obj", force="mesh").vertices
             static_w, still, rest = damping_weights(
                 near, vis, held, segs, {t: T_ for t, T_, _ in fp}, fps, verts, tp, axis,
                 a.still_speed, a.w_damp, a.w_still)
             for s0, s1, w_ in ov.get("static", []):  # agent: hold the object still in these windows
                 static_w[s0:s1] = np.maximum(static_w[s0:s1], w_)
             phases = debounce_phases(side_at, 3)  # spline spans: contact changes without flicker
-            report[name] = {"n_fp": len(fp), "n_icp": len(icp), "symmetry": sym["kind"], "sym_group": len(sym["group"]),
+            report[name] = {"n_fp": len(fp), "n_icp": len(icp), "fp_rot_gated": n_gated, "symmetry": sym["kind"], "sym_group": len(sym["group"]),
                             "canonicalised": n_ch,
                             "sym_axis": None if axis is None else axis.tolist(),
                             "static_frac": float((static_w > 0.5).mean()), "still_frac": float((still > 0.5).mean()), "damp_mean": float(static_w.mean()),
@@ -536,6 +666,8 @@ def main():
                             "contact_frames": np.nonzero(touch)[0].tolist(),
                             "hand_contact": {sd: [t for t, x in enumerate(side_at) if sd in x] for sd in hands},
                             "n_follow": len(follow),
+                            "mask_contact": None if mc is None else {sd: [t for t, x in enumerate(mc[0]) if sd in x] for sd in hands},
+                            "grasp_bridged": bridged,
                             "hand_carry": {sd: sorted(t for g in segs if g["side"] == sd for t in g["frames"]) for sd in hands},
                             "carry_trim": carry_log, "icp_time_shift": icp_shift,
                             "grasp_segments": [{"side": g["side"], "n": len(g["frames"]),
@@ -562,12 +694,20 @@ def main():
                                                          "spline_knot_seconds": a.spline_knot_seconds,
                                                          "contact_phases": phases})
                 vdir = run / variant / name / "poses" if a.out_variant else run / (variant + SUF) / name / "poses"
+                # a new fusion invalidates flip_check's backup of the previous one (else flip_check restores it)
+                shutil.rmtree(vdir.parent / "poses_preflip", ignore_errors=True)
+                shutil.rmtree(vdir.parent / "poses_prelock", ignore_errors=True)
+                shutil.rmtree(vdir.parent / "poses_predespike", ignore_errors=True)
+                (vdir.parent / "flip_report.json").unlink(missing_ok=True)
                 for t in slam:
                     write(vdir, t, np.linalg.inv(slam[t]) @ poses[t])
                 report[name][variant] = {"status": info["status"], "sources": info["sources"]}
             print(r, name, json.dumps(report[name]), flush=True)
         if not a.out_variant:  # agent trials never overwrite the pipeline's report (hand contacts live there)
-            (run / (f"fusion_{a.global_variant}_report.json" if a.only_global else "fusion_report.json")).write_text(json.dumps(report, indent=2))
+            fr = f"fusion_{a.global_variant}_report.json" if a.only_global else "fusion_report.json"
+            report["_obj_dir"] = OBJ
+            (run / fr).write_text(json.dumps(report, indent=2))
+            (run / fr.replace(".json", f"{SUF}.json")).write_text(json.dumps(report, indent=2))   # per tree, never shared
 
 
 if __name__ == "__main__":

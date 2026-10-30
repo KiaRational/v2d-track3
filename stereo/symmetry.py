@@ -33,8 +33,20 @@ def _axes(P):
     return vec.T
 
 
-def mesh_symmetry(mesh_path, tol_mm: float = 5.0, n: int = 4000, seed: int = 0):
-    """Symmetries of the mesh, as rotations in the object frame (mesh centroid at origin)."""
+# Conservative: calling an asymmetric object symmetric lets the fusion spin it freely (cups with handles were
+# "continuous" on the mean alone: mean 2.7-3.0 mm, 98th pct 10.6-11.2 mm -- but vs public mocap keeping the cups
+# continuous tracked them better (c2 0.97 vs 0.97 ok, fewer spins), so the continuous cap is 12 mm), which the robot cannot imitate; the
+# reverse error is harmless. True flips of our boards: 98th pct 4.2-5.0 mm; blue cup flip 5.8, sweeper 7.7.
+P98_CONT_MM, P98_FLIP_MM = float("inf"), float("inf")   # p98 test OFF: the symmetric branch mapping keeps ICP/FP on
+# one consistent branch for near-symmetric shapes (sweeper ends, cup without its handle in view); without it the
+# fusion followed ICP flips (c3 test: 302 vs 268 jumps > 10 deg, 1830 vs 1285 deg rotation at rest over 40 runs)
+
+
+def mesh_symmetry(mesh_path, tol_mm: float = 5.0, n: int = 4000, seed: int = 0, flip_tol_mm: float = 3.0):
+    """Symmetries of the mesh, as rotations in the object frame (mesh centroid at origin). Continuous: ADD-S < tol_mm
+    at 37/90/143 deg. Discrete 180-deg flips: ADD-S < flip_tol_mm -- true flips of our meshes score 2.0-2.6 mm
+    (boards, a lid about its axis); a roughly box-shaped mini sweeper scored 4.9 mm on flips the stereo depth
+    tells apart (3.0 vs 5.2 mm fit), and calling them symmetric let the fusion spin the held object 180-360 deg."""
     m = trimesh.load(mesh_path, force="mesh")
     P = trimesh.sample.sample_surface(m, n, seed=seed)[0] - m.centroid
     tree = cKDTree(P)
@@ -42,17 +54,21 @@ def mesh_symmetry(mesh_path, tol_mm: float = 5.0, n: int = 4000, seed: int = 0):
     def adds(R):
         return float(tree.query(P @ R.T)[0].mean() * 1000)
 
+    def p98(R):   # a small asymmetric part (cup handle, lid bar, brush ring) hardly moves the MEAN but does move this
+        return float(np.percentile(tree.query(P @ R.T)[0], 98) * 1000)
+
     cont_axis, group = None, [np.eye(3)]
     for ax in _axes(P):
         # continuous symmetry: invariant at several unrelated angles
-        if max(adds(Rotation.from_rotvec(np.deg2rad(a) * ax).as_matrix()) for a in (37, 90, 143)) < tol_mm:
+        Rs = [Rotation.from_rotvec(np.deg2rad(a) * ax).as_matrix() for a in (37, 90, 143)]
+        if max(adds(R) for R in Rs) < tol_mm and max(p98(R) for R in Rs) < P98_CONT_MM:
             cont_axis = ax
             group = [Rotation.from_rotvec(2 * np.pi * k / CONT_STEPS * ax).as_matrix() for k in range(CONT_STEPS)]
             break
     if cont_axis is None:
         for ax in _axes(P):
             R = Rotation.from_rotvec(np.pi * ax).as_matrix()
-            if adds(R) < tol_mm:
+            if adds(R) < flip_tol_mm and p98(R) < P98_FLIP_MM:
                 group.append(R)
         # products of two independent 180 deg flips are themselves symmetries
         for i in range(1, len(group)):

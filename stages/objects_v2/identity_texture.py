@@ -54,10 +54,13 @@ def sample_textured(mesh_path, n=30000, seed=0):
     m = trimesh.load(mesh_path, force="mesh")
     pts, fidx = trimesh.sample.sample_surface(m, n, seed=seed)
     nrm = m.face_normals[fidx]
-    tex = np.asarray(m.visual.material.image.convert("RGB")).astype(np.float32)
-    uv = m.visual.uv
     tri = m.faces[fidx]
     bary = trimesh.triangles.points_to_barycentric(m.vertices[tri], pts)
+    if m.visual.kind != "texture":   # vertex-coloured mesh (our reconstructed meshes_recon): interpolate the colours
+        vc = np.asarray(m.visual.vertex_colors)[:, :3].astype(np.float32)
+        return np.asarray(pts), np.asarray(nrm), (vc[tri] * bary[:, :, None]).sum(1)
+    tex = np.asarray(m.visual.material.image.convert("RGB")).astype(np.float32)
+    uv = m.visual.uv
     puv = (uv[tri] * bary[:, :, None]).sum(1)
     H, W = tex.shape[:2]
     px = np.clip((puv[:, 0] * (W - 1)).astype(int), 0, W - 1)

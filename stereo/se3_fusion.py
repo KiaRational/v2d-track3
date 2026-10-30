@@ -92,7 +92,7 @@ def _init(meas, n, rel_floor=0.25):
     if not by_t:
         raise ValueError("no positive-weight measurement")
     ts = np.array(sorted(by_t))
-    P, Rs = [], []
+    P, Rs, tr_ = [], [], []
     for t in ts:
         Ts, ws, wr = (np.array(x) if i else x for i, x in enumerate(zip(*by_t[t])))
         p = np.array([T[:3, 3] for T in Ts])
@@ -102,15 +102,49 @@ def _init(meas, n, rel_floor=0.25):
             c = np.cumsum(ws[order[:, k]])
             med.append(p[order[np.searchsorted(c, c[-1] / 2), k], k])
         P.append(med)
+        if np.sum(wr) <= 0:   # rotation gated at this frame (translation only): interpolate its rotation
+            continue
         M = sum(w * T[:3, :3] for T, w in zip(Ts, wr))
         U, _, Vt = np.linalg.svd(M)
-        Rs.append(U @ np.diag([1, 1, np.linalg.det(U @ Vt)]) @ Vt)
+        Rs.append(U @ np.diag([1, 1, np.linalg.det(U @ Vt)]) @ Vt); tr_.append(t)
     P = np.array(P)
     frames = np.arange(n)
     tc = np.clip(frames, ts[0], ts[-1])
     p0 = np.stack([np.interp(tc, ts, P[:, k]) for k in range(3)], 1)
-    R0 = Slerp(ts, Rotation.from_matrix(np.array(Rs)))(tc).as_matrix() if len(ts) > 1 else np.repeat(Rs, n, 0)
+    tr_ = np.array(tr_) if tr_ else ts[:1]
+    if not Rs:
+        Rs = [np.eye(3)]
+    tcr = np.clip(frames, tr_[0], tr_[-1])
+    R0 = Slerp(tr_, Rotation.from_matrix(np.array(Rs)))(tcr).as_matrix() if len(tr_) > 1 else np.repeat(np.array(Rs)[:1], n, 0)
     return p0, R0
+
+
+_FLIPS = [np.diag([1.0, -1, -1]), np.diag([-1.0, 1, -1]), np.diag([-1.0, -1, 1])]
+
+
+def _ang(A, B):
+    return float(np.degrees(np.arccos(np.clip((np.trace(A @ B.T) - 1) / 2, -1, 1))))
+
+
+def _grasp_rotation(R_trust, fr, H, R0, n):
+    """Object-in-hand rotation for one grasp segment, continuity-aware. The trusted-frame mean alone can sit on the
+    wrong side of a FoundationPose flip; the object then flips by ~160 deg exactly when it is grabbed or released (e30
+    sweeper, e33 spoon). Candidates: that mean, the rotations that keep the object where it was just before the grasp
+    and just after it, and each of these with a 180 deg flip about an object axis. Score: median per-frame
+    disagreement with the measurements (capped at 90 deg) + the rotation jumps the grasp leaves at its two ends."""
+    base = [R_trust]
+    if fr[0] > 0:
+        base.append(H[0][:3, :3].T @ R0[fr[0] - 1])
+    if fr[-1] < n - 1:
+        base.append(H[-1][:3, :3].T @ R0[fr[-1] + 1])
+    cands = base + [C @ F for C in base for F in _FLIPS]
+
+    def score(Rg):
+        Ro = H[:, :3, :3] @ Rg
+        data = np.median([min(_ang(Ro[i], R0[t]), 90.0) for i, t in enumerate(fr)])
+        jump = (_ang(Ro[0], R0[fr[0] - 1]) if fr[0] > 0 else 0.0) + (_ang(Ro[-1], R0[fr[-1] + 1]) if fr[-1] < n - 1 else 0.0)
+        return data + jump
+    return min(cands, key=score)
 
 
 def fuse_trajectory(measurements: Mapping[str, Sequence[tuple]], n_frames: int,
@@ -146,7 +180,8 @@ def fuse_trajectory(measurements: Mapping[str, Sequence[tuple]], n_frames: int,
         fr = [int(t) for t in g["frames"] if 0 <= int(t) < n and int(t) in g["H"]]
         if len(fr) >= 2 and float(g.get("w", 1.0)) > 0:
             grasp.append({"frames": fr, "H": np.array([np.asarray(g["H"][t], float) for t in fr]),
-                          "w": float(g.get("w", 1.0))})
+                          "w": float(g.get("w", 1.0)),
+                          "trust": np.array([float((g.get("trust") or {}).get(t, 0.0)) for t in fr])})
     n_g = sum(len(g["frames"]) for g in grasp)
     # spline spans: control points [c_t (m,3), rotation deltas on C0 (m,3)] appended after the grasps
     spans, off = [], 6 * n + 6 * len(grasp)
@@ -167,6 +202,14 @@ def fuse_trajectory(measurements: Mapping[str, Sequence[tuple]], n_frames: int,
     n_sp = sum(6 * len(s["idx"]) + 6 * len(s["D"]) for s in spans)
     n_res = 6 * n_un + (6 * (n - 2) if n > 2 else 0) + 6 * len(st_idx) + 6 * len(follow) + 6 * n_g + n_sp + 3 * n
     n_var = off
+    # Batch the repeated measurement/follow residuals. Their ordering is unchanged
+    # (translation then rotation per frame), preserving the sparse Jacobian layout.
+    mt = np.array([r[1] for r in flat], dtype=int)
+    mT = np.array([r[2] for r in flat])
+    mw = np.sqrt(np.array([r[3] for r in flat]))
+    ft = np.array([r[0] for r in follow], dtype=int)
+    fT = np.array([r[1] for r in follow])
+    fw = np.sqrt(np.array([r[2] for r in follow]))[:, None]
 
     def unpack(x):
         xf = x[:6 * n].reshape(n, 6)
@@ -182,14 +225,14 @@ def fuse_trajectory(measurements: Mapping[str, Sequence[tuple]], n_frames: int,
         R, p = unpack(x)
         out = np.empty(n_res)
         i = 0
-        for src, t, T, w in flat:
-            swt, swr = np.sqrt(w[0]), np.sqrt(w[1])
-            out[i:i + 3] = swt * (p[t] - T[:3, 3]) / prm["sigma_t"]
+        if n_un:
+            trans = mw[:, :1] * (p[mt] - mT[:, :3, 3]) / prm["sigma_t"]
             if axis is None:
-                out[i + 3:i + 6] = swr * _log(T[:3, :3].T @ R[t]) / prm["sigma_r"]
+                rot = _log(np.swapaxes(mT[:, :3, :3], 1, 2) @ R[mt])
             else:
-                out[i + 3:i + 6] = swr * (R[t] @ axis - T[:3, :3] @ axis) / prm["sigma_r"]
-            i += 6
+                rot = R[mt] @ axis - mT[:, :3, :3] @ axis
+            out[:6*n_un] = np.c_[trans, mw[:, 1:] * rot / prm["sigma_r"]].ravel()
+            i = 6*n_un
         if n > 2:
             acc = (p[2:] - 2 * p[1:-1] + p[:-2]) / prm["sigma_acc"]
             om = Rotation.from_matrix(np.einsum("nji,njk->nik", R[:-1], R[1:])).as_rotvec()
@@ -213,11 +256,13 @@ def fuse_trajectory(measurements: Mapping[str, Sequence[tuple]], n_frames: int,
             out[i + 3 * m:i + 6 * m].reshape(m, 3)[:] = sw * Rotation.from_matrix(
                 np.einsum("fji,fjk->fik", pred_R, R[fr])).as_rotvec() / prm["sigma_gr"]
             i += 6 * m
-        for t, D, w in follow:
-            sw = np.sqrt(w)
-            out[i:i + 3] = sw * (p[t + 1] - (D[:3, :3] @ p[t] + D[:3, 3])) / prm["sigma_ft"]
-            out[i + 3:i + 6] = sw * _log((D[:3, :3] @ R[t]).T @ R[t + 1]) / prm["sigma_fr"]
-            i += 6
+        if len(follow):
+            pred_p = np.einsum("nij,nj->ni", fT[:, :3, :3], p[ft]) + fT[:, :3, 3]
+            pred_R = fT[:, :3, :3] @ R[ft]
+            trans = fw * (p[ft+1] - pred_p) / prm["sigma_ft"]
+            rot = fw * _log(np.swapaxes(pred_R, 1, 2) @ R[ft+1]) / prm["sigma_fr"]
+            out[i:i+6*len(follow)] = np.c_[trans, rot].ravel()
+            i += 6*len(follow)
         for s in spans:   # spline smoothness of the current estimate (see module docstring)
             idx, m, o = s["idx"], s["m"], s["off"]
             L, k = len(idx), len(s["D"])
@@ -284,9 +329,12 @@ def fuse_trajectory(measurements: Mapping[str, Sequence[tuple]], n_frames: int,
     for g in grasp:   # initialise G from the segment's most trusted frames (median of H^-1 O)
         fr, H = g["frames"], g["H"]
         Gs = np.linalg.inv(H) @ np.stack([np.r_[np.c_[R0[t], p0[t]], [[0, 0, 0, 1.0]]] for t in fr])
+        tr = g["trust"] >= 0.5   # clearly seen frames (caller's trust: visibility x stereo-ICP); else all frames
+        if tr.sum() >= 3:
+            Gs = Gs[tr]
         g["t0"] = np.median(Gs[:, :3, 3], axis=0)
         U, _, Vt = np.linalg.svd(Gs[:, :3, :3].sum(0))
-        g["R0"] = U @ np.diag([1, 1, np.linalg.det(U @ Vt)]) @ Vt
+        g["R0"] = _grasp_rotation(U @ np.diag([1, 1, np.linalg.det(U @ Vt)]) @ Vt, fr, H, R0, n)
     x0 = np.concatenate([np.c_[np.zeros((n, 3)), p0].ravel(), np.zeros(6 * len(grasp))] +
                         [np.r_[s["c_t0"].ravel(), np.zeros(3 * s["m"])] for s in spans])
     sol = least_squares(residuals, x0, jac_sparsity=S.tocsr(), loss=prm["loss"], f_scale=prm["f_scale"],
