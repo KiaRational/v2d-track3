@@ -30,6 +30,8 @@ from flash_chord.scene.collision import CollisionPolicy
 from flash_chord.scene.setup import setup_scene
 
 SETTLE_S, MOVE_M, TURN_DEG, BLEND = 2.0, 0.005, 3.0, 5
+MIN_REST, MAX_TILT_DEG, MAX_MOVE_M = 5, 20.0, 0.03   # a settle beyond these is not "resting" (held from the start, at the
+#                                                      table edge, on another object): keep the reference pose
 
 
 def settle(parquet):
@@ -63,8 +65,9 @@ def main():
             shutil.copy(f, f + ".presettle")
         q0, q1 = settle(f + ".presettle")
         t = pq.read_table(f + ".presettle")
-        pos = np.array(t.column("object_body_position").to_pylist(), float)     # (T, B, 3)
-        wxyz = np.array(t.column("object_body_wxyz").to_pylist(), float)        # (T, B, 4)
+        assert t.num_rows == 1, f"{seq}: expected the one-row sequence layout, got {t.num_rows} rows"
+        pos = np.array(t.column("object_body_position")[0].as_py(), float)     # (T, B, 3): one row = whole sequence
+        wxyz = np.array(t.column("object_body_wxyz")[0].as_py(), float)        # (T, B, 4)
         T_, B = pos.shape[:2]
         # the simulator's frame-0 state must be the parquet's frame 0 (else the frames differ: refuse)
         ref0 = np.c_[pos[0], wxyz[0][:, 1:], wxyz[0][:, :1]]
@@ -76,11 +79,14 @@ def main():
             mv = np.linalg.norm(pos[:, b] - pos[0, b], axis=1) > MOVE_M
             tn = (R_ref * R_ref[0].inv()).magnitude() > np.radians(TURN_DEG)
             k = int(np.argmax(mv | tn)) if (mv | tn).any() else T_
-            if k < 2:
-                rep.append({"body": b, "rest_frames": k, "applied": False})
-                continue
             Rs = Rotation.from_quat(q1[b, 3:])
             ps = q1[b, :3]
+            dtilt = float(np.degrees((Rs * R_ref[0].inv()).magnitude()))
+            dmove = float(np.linalg.norm(ps - ref0[b, :3]))
+            if k < MIN_REST or dtilt > MAX_TILT_DEG or dmove > MAX_MOVE_M:
+                rep.append({"body": b, "rest_frames": k, "applied": False, "tilt_change_deg": round(dtilt, 1),
+                            "move_cm": round(dmove * 100, 2)})
+                continue
             for u in range(k):
                 al = 0.0 if u < k - BLEND else (u - (k - BLEND) + 1) / (BLEND + 1)   # ease back to the reference
                 R = Slerp([0, 1], Rotation.concatenate([Rs, R_ref[u]]))(al)
@@ -92,13 +98,13 @@ def main():
                         "tilt_change_deg": round(float(np.degrees((Rs * R_ref[0].inv()).magnitude())), 1),
                         "move_cm": round(float(np.linalg.norm(ps - ref0[b, :3])) * 100, 2)})
         cols = {c: t.column(c) for c in t.column_names}
-        cols["object_body_position"] = pa.array(pos.tolist(), type=t.schema.field("object_body_position").type)
-        cols["object_body_wxyz"] = pa.array(wxyz.tolist(), type=t.schema.field("object_body_wxyz").type)
+        cols["object_body_position"] = pa.array([pos.tolist()], type=t.schema.field("object_body_position").type)
+        cols["object_body_wxyz"] = pa.array([wxyz.tolist()], type=t.schema.field("object_body_wxyz").type)
         if "object_root_position" in cols:   # root = body 0
-            cols["object_root_position"] = pa.array(pos[:, 0].tolist(), type=t.schema.field("object_root_position").type)
+            cols["object_root_position"] = pa.array([pos[:, 0].tolist()], type=t.schema.field("object_root_position").type)
         if "object_root_axis_angle" in cols:
             rv = Rotation.from_quat(np.c_[wxyz[:, 0, 1:], wxyz[:, 0, :1]]).as_rotvec()
-            cols["object_root_axis_angle"] = pa.array(rv.tolist(), type=t.schema.field("object_root_axis_angle").type)
+            cols["object_root_axis_angle"] = pa.array([rv.tolist()], type=t.schema.field("object_root_axis_angle").type)
         out = pa.table(cols, schema=t.schema)
         pq.write_table(out, f)
         report[seq] = rep
