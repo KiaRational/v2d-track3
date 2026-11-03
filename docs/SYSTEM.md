@@ -200,3 +200,17 @@ plotted with `report/plot_curves.py`; median across episodes, band = 25–75th p
 * `figures/fig2_sac_task.png` — SAC with the task + contact reward on the 20 scored episodes: t3 vs t10 (simulator-settled
   starts, friction 1.5).
 * `figures/fig3_per_episode.png` — episode return per scored episode, t10 friction 1.5.
+
+## 9. Further figures (`docs/figures/`, made by `report/make_figures.py` + `report/figs.sbatch`)
+| file | content |
+|---|---|
+| `fig4_kaggle_history.png` | Kaggle score per submission, one panel per metric |
+| `fig5_leaderboard.png` | our standing per metric against every team (public leaderboards, 2026-11-03) |
+| `fig6_episode_mpsr.png`, `fig6_episode_spsr.png` | per scored episode × training run success (own-reference), submitted run outlined |
+| `fig7_reward_terms.png` | reward terms during training (SAC t10 friction 1.5, median of 20 episodes) |
+| `fig8_sim_settle.png` | object rotation at rest in the simulator, before vs after simulator settling (12.3 → 5.0° mean) |
+| `fig9_pose_variants_mocap.png` | object-pose variants vs public mocap (DEV ONLY) |
+| `fig10_dustpan_depth.png` | dust pan: stereo-depth top surface vs mesh before / after thinning |
+| `fig11_hard_episodes.png` | hard episodes across runs (AUC, MP-SR) |
+| `fig12a/b/c_rollout_*.png` | robot rollout filmstrips: e38 dust pan (success), e30 sweeper (success), e20 pitcher (failure) |
+| `fig13a/b/c_pose_overlay_*.jpg` | object meshes projected on the camera frames (e33 spoon, e38 dust pan, e30 sweeper) |
