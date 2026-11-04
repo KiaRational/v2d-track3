@@ -74,7 +74,9 @@ Our contributions:
 
 \paragraph{Perception.} We rectify the published colour-to-stereo extrinsic (3.4 vs.\ 18.9\,px reprojection error), run
 FoundationStereo~\citep{wen2025foundationstereo} for metric depth and DROID-SLAM~\citep{teed2021droid} for ego-motion, and
-fit the round table plane for gravity. SAM~3~\citep{carion2025sam3} segments objects and hands. Object meshes come from
+fit the round table plane for gravity. A VLM, Qwen3-VL~\citep{bai2025qwen3vl}, describes the task from 8 frames and names each object with a short noun phrase (the
+object identifier is a fallback); these phrases prompt SAM~3~\citep{carion2025sam3}, which segments objects and hands (masks
+match the hand-written prompts within 0.02 IoU on 35/36 objects). Object meshes come from
 SAM~3D Objects~\citep{chen2025sam3d} on automatically picked unoccluded views, metrically scaled by stereo depth; the
 consensus of several samples is kept. Hands are Dyn-HaMR~\citep{yu2025dynhamr} MANO~\citep{romero2017mano} trajectories in metric scale;
 the few frames it misses (3157392\%) fall back to WiLoR~\citep{potamias2025wilor} keypoints triangulated across the stereo pair.
@@ -110,7 +112,8 @@ all three pitcher episodes).
 \paragraph{Policy learning.} One FlashSAC~\citep{haarnoja2018sac,chordreport} policy per episode (2048 worlds,
 250\,M steps, real-time playback) with the reward
 $r = 40\,r_{\mathrm{obj}} + 5\,r_{\mathrm{cloc}} + 10\,r_{\mathrm{wrench}} + 5\,r_{\mathrm{prog}} + 200\,\mathbb{1}_{\mathrm{done}} - \ldots$,
-i.e.\ object keypoint tracking, human contact locations, contacts able to support the object, progress while every object is
+i.e.\ object keypoint tracking, a contact-aware term rewarding robot fingers at the human contact locations and
+contacts able to support the object, progress while every object is
 within 3\,cm/0.3\,rad, and a completion bonus, with termination limits annealed from 3$\times$ to the official values. We
 train two seeds and a stickier contact (friction 1.5) and submit, per episode, the run with the best own-reference
 MP-SR, then SP-SR, then AUC.
@@ -167,6 +170,15 @@ Code: \url{https://github.com/KiaRational/v2d-track3}.
 \appendix
 \section{Additional Results}
 \label{sec:appendix}
+
+\begin{figure*}[h]
+  \centering
+  \includegraphics[width=\linewidth]{figures/arch.pdf}
+  \caption{System architecture. A VLM names the objects for SAM~3; hand and object estimators produce MANO hands, meshes,
+  all FoundationPose hypotheses and 3D point tracks; \method selects and grounds object trajectories; the 4D
+  reconstruction is retargeted to Sharpa hands and a per-episode SAC policy is trained in simulation.}
+  \label{fig:arch}
+\end{figure*}
 
 \begin{figure}[h]
   \centering

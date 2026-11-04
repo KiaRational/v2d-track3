@@ -147,7 +147,7 @@ for side, c in (("left", (98, 80, 214)), ("right", (237, 161, 0))):
 save(crop(hv2), "hand.png")
 
 
-def dec(m, n=30000):
+def dec(m, n=60000):
     if len(m.faces) <= n:
         return m
     keep = np.random.default_rng(0).choice(len(m.faces), n, replace=False)
@@ -164,7 +164,7 @@ def render_mesh(meshes, name, elev=22, azim=-60, size=4):
         n = m.face_normals
         shade = 0.45 + 0.55 * np.clip(n @ light, 0, 1)
         fc = np.clip(np.array(col)[None] * shade[:, None], 0, 1)
-        ax.add_collection3d(Poly3DCollection(tri, facecolors=fc, edgecolors="none", linewidths=0))
+        ax.add_collection3d(Poly3DCollection(tri, facecolors=fc, edgecolors=fc, linewidths=0.3))
         allv.append(m.vertices)
     V = np.concatenate(allv)
     c, r = V.mean(0), np.ptp(V, 0).max() / 2

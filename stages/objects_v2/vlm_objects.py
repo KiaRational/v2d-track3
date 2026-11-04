@@ -69,7 +69,9 @@ def ask(a):
         content2 = content + [{"type": "text", "text": MAP.format(names=hints, objs=json.dumps(r1.get("objects", [])))}]
         r2 = parse_json_reply(cli.chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": content2}],
                                        temperature=0.0, max_tokens=400, json_mode=True)["content"])
-        prompts = {nm: [str(r2.get("prompts", {}).get(nm, nm.replace("_", " "))).strip().lower()] for nm in names}
+        # the VLM phrase first; the official object identifier as a fallback concept (e19: "yellow scraper" found nothing)
+        prompts = {nm: list(dict.fromkeys([str(r2.get("prompts", {}).get(nm, nm.replace("_", " "))).strip().lower(),
+                                           nm.replace("_", " ")])) for nm in names}
         rec = {"task": r1.get("task"), "vlm_objects": r1.get("objects", []), "prompts": prompts, "model": a.model,
                "frames": list(fr)}
         (run / "vlm_objects.json").write_text(json.dumps(rec, indent=1))
