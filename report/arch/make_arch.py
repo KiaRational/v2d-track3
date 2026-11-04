@@ -22,7 +22,7 @@ C = {  # panel fill, border/accent, title
     "red": ("#f7dcd8", "#d2463f", "#a8302a"),
     "robot": ("#e9e9e7", "#8d8d88", "#444440"),
 }
-PINK, GREYA = "#e48f89", "#a9a9a5"
+PINK, GREYA = "#d2463f", "#8d8d88"
 
 fig = plt.figure(figsize=(20, 10.4))
 ax = fig.add_axes([0, 0, 1, 1])
@@ -39,10 +39,11 @@ def panel(x, y, w, h, key, title=None, title_y=None, fs=15.5):
 
 def box(x, y, w, h, text, key, italic=False, fs=12, fill="white", lw=2.2, bold=False):
     fc, ec, tc = C[key]
+    fs += 0.8
     ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0,rounding_size=1.4", fc=fill, ec=ec, lw=lw, zorder=3))
     if text:
         ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=fs, color=tc,
-                style="italic" if italic else "normal", weight="bold" if bold else "normal", zorder=4, linespacing=1.15)
+                style="italic" if italic else "normal", weight="bold", zorder=4, linespacing=1.15)
     return (x, y, w, h)
 
 
@@ -79,7 +80,7 @@ def elbow(pts, col, lw=2.4, z=6, halo=False):
 
 
 def fat(p0, p1, col):
-    arrow(p0, p1, col, lw=7, ms=22)
+    arrow(p0, p1, col, lw=2.4, ms=16)
 
 
 def R(b): return (b[0] + b[2], b[1] + b[3] / 2)
@@ -92,7 +93,7 @@ def math(x, y, s, fs=14, col="#222", ha="center"):
     ax.text(x, y, s, fontsize=fs, color=col, ha=ha, va="center", zorder=7)
 
 
-def head(x, y, s, key, fs=12.2):
+def head(x, y, s, key, fs=13.2):
     ax.text(x, y, s, ha="center", fontsize=fs, color=C[key][2], weight="bold", zorder=6)
 
 
@@ -101,15 +102,15 @@ panel(2, 44, 36, 58, "green", "Egocentric Episode", title_y=98.3)
 for k, (nm, dx, dy) in enumerate((("video_2.png", 0, 6), ("video_6.png", 2.2, 3), ("video_10.png", 4.4, 0))):   # stacked frames
     ax.add_patch(FancyBboxPatch((5.6 + dx, 61.2 + dy), 25.5, 19.1, boxstyle="round,pad=0,rounding_size=0.4", fc="#3a3a38",
                                 ec="none", alpha=0.25, zorder=3))
-    img(nm, 5 + dx, 62 + dy, 25.5, 19.1)
-label(14.0, 88.6, 21, 4.4, "raw video", "green", fs=11)
+    img(nm, 5 + dx, 62 + dy, 25.5, 19.1, frame=False)
+label(9.95, 88.6, 20, 4.4, "raw video", "green", fs=11)
 box(8.5, 51, 23, 7.5, "colour camera +\nmono stereo pair", "green", fs=10.5)
 panel(2, 2, 36, 39, "green", "Task & Objects via VLM", title_y=37.4)
 vlm = box(5, 26, 30, 7, "Qwen3-VL (local)", "green", italic=True, fs=13)
 ax.text(20, 17.6, "“The person picks up a blue cup and a\nwooden spoon, stirs the contents of the\ncup with the spoon, "
         "and then places\nboth items back on the table.”", ha="center", va="center", fontsize=10, style="italic",
         color="#3f7a2a", linespacing=1.2)
-obj = box(5, 4.5, 30, 7, "“wooden spoon”, “blue cup”", "green", fs=12.5, bold=True)
+obj = box(5, 4.5, 30, 7, "“wooden spoon”, “blue cup”", "green", fs=11.2, bold=True)
 arrow(B(vlm), (20, 23.2), C["green"][1], lw=2)
 arrow((20, 12.3), T(obj), C["green"][1], lw=2)
 
@@ -117,15 +118,15 @@ arrow((20, 12.3), T(obj), C["green"][1], lw=2)
 panel(42, 79, 82, 23, "yellow", "Hand Estimator", title_y=99.2)
 dh = box(44.5, 84, 15, 9, "Dyn-HaMR", "yellow", italic=True, fs=13)
 mf = box(63, 84.8, 21, 8.2, "metric MANO\ntrajectory", "yellow", fs=11.5, fill="#fff8e0")
-box(63, 80.6, 21, 3.4, "WiLoR stereo fallback (<2%)", "yellow", italic=True, fs=8.5)
+box(63, 80.6, 21, 3.4, "WiLoR stereo fallback (<2%)", "yellow", italic=True, fs=7.8)
 hp = box(88, 81.5, 15, 14, "hands out\nof objects", "yellow", fs=10.5, fill="#fff8e0")
 img("hand4d.png", 104.5, 80.0, 19, 17.5, crop=(0.3, 0.8, 0.15, 0.9), frame=False)
 math(114, 98.6, r"$\mathcal{M}^h_t$", 15)
 arrow(R(dh), L(mf), C["yellow"][1]); arrow(R(mf), (88, 88.9), C["yellow"][1]); arrow((103, 88.5), (106, 88.5), C["yellow"][1])
 
 panel(42, 50, 82, 26.5, "grey", "Metric Geometry", title_y=73.6, fs=13.5)
-fs_ = box(44.5, 61.5, 18, 7, "FoundationStereo", "grey", italic=True, fs=11.5)
-ds = box(44.5, 52, 18, 7, "DROID-SLAM", "grey", italic=True, fs=11.5)
+fs_ = box(44.5, 61.5, 19.5, 7, "FoundationStereo", "grey", italic=True, fs=11)
+ds = box(44.5, 52, 19.5, 7, "DROID-SLAM", "grey", italic=True, fs=11.5)
 img("depth.png", 65.5, 59.5, 13.5, 10.8)
 math(72.2, 65, r"$D_t$", 17, col="white")
 img("slam.png", 82, 50.6, 18, 16.5, crop=(0.3, 0.85, 0.15, 0.85), frame=False)
@@ -143,10 +144,10 @@ math(84, 33.5, r"$\mathcal{S}^o_t$", 16)
 s3d = box(44.5, 18, 21, 8, "SAM 3D Objects\n+ stereo scale", "blue", italic=True, fs=11)
 img("meshes.png", 69, 13.5, 17, 13, crop=(0.15, 0.85, 0.1, 0.9))
 math(84, 15.5, r"$\mathcal{M}^o$", 16)
-fp = box(89.5, 34, 15, 9, "FoundationPose\nall ~252 hyp.", "blue", italic=True, fs=10)
+fp = box(89.5, 34, 15, 9, "FoundationPose\nall ~252 hyp.", "blue", italic=True, fs=9.6)
 img("fp_hypotheses.png", 107, 31.5, 15, 13, crop=(0.15, 0.65, 0.5, 1.0))
 math(114.5, 46.2 - 0.9, r"$\{X^k_t\}$", 14)
-te = box(89.5, 18, 15, 9, "TrackEverything\n3D tracks", "blue", italic=True, fs=10)
+te = box(89.5, 18, 15, 9, "TrackEverything\n3D tracks", "blue", italic=True, fs=9.6)
 img("tracks.png", 107, 15.5, 15, 13, crop=(0.2, 0.7, 0.28, 0.95))
 math(114.5, 13.4, r"$p_n(t)$", 14)
 arrow(R(s3), (69, 38.5), C["blue"][1]); arrow((86, 38.5), L(fp), C["blue"][1])
@@ -157,12 +158,14 @@ arrow((104.5, 38.5), (107, 38.5), C["blue"][1]); arrow((104.5, 22.5), (107, 22.5
 elbow([(91, 50), (91, 47), (97, 43)], C["grey"][1], lw=2.2)
 ax.text(92.5, 48.3, r"$D_t,\ T_t$", fontsize=11, color=C["grey"][2], zorder=7)
 
-# inputs -> estimators
-arrow((35, 84), L(dh), C["yellow"][1], rad=-0.12)
-arrow((35, 70), L(fs_), C["grey"][1], rad=0.08)
-arrow((35, 67), L(ds), C["grey"][1], rad=0.18)
-arrow((35, 64), (44.5, 41), C["blue"][1], rad=0.22)
-arrow(R(obj), (44.5, 36), C["green"][1], rad=0.32, lw=2.6)
+# inputs -> estimators: one orthogonal trunk in the gap between the columns
+IN = "#5f8f45"
+ax.plot([34.9, 40], [74, 74], color=IN, lw=2.4, zorder=6, solid_capstyle="round")
+ax.plot([40, 40], [40.5, 88.5], color=IN, lw=2.4, zorder=6, solid_capstyle="round")
+ax.add_patch(plt.Circle((40, 74), 0.55, color=IN, zorder=7))
+for y_ in (88.5, 65.0, 55.5, 40.5):
+    elbow([(40, y_), (44.5, y_)], IN)
+elbow([(35, 8), (40, 8), (40, 36), (44.5, 36)], C["green"][1])   # VLM object names -> SAM 3 prompts
 
 # ---------------- column 3: SelectTrack ----------------
 panel(127, 24, 36, 78, "red", "SelectTrack:\ninteraction-aware refinement", title_y=97.0, fs=14)
@@ -185,8 +188,10 @@ for a_, b_ in ((r1, r2), (r2, r3), (r3, r4)):
 # estimators -> refinement: orthogonal, bundled
 elbow([(122, 88.5), (124.0, 88.5), (124.0, 50.5), (129.5, 50.5)], C["yellow"][1])
 elbow([(124.0, 50.5), (124.0, 33.5), (129.5, 33.5)], C["yellow"][1])
+ax.add_patch(plt.Circle((124.0, 50.5), 0.55, color=C["yellow"][1], zorder=7))
 elbow([(122, 38.5), (125.6, 38.5), (125.6, 83), (129.5, 83)], C["blue"][1], halo=True)
-elbow([(122, 22.5), (125.6, 22.5), (125.6, 38.5)], C["blue"][1], z=6)
+ax.plot([122, 125.6, 125.6], [22.5, 22.5, 38.5], color=C["blue"][1], lw=2.4, zorder=6, solid_joinstyle="round")
+ax.add_patch(plt.Circle((125.6, 38.5), 0.55, color=C["blue"][1], zorder=7))
 
 panel(127, 2, 36, 19, "red", "4D HOI Reconstruction", title_y=18.2, fs=13)
 img("scene4d_render.png", 128.5, 2.5, 19, 13.5, crop=(0.28, 0.82, 0.18, 0.88), frame=False)
@@ -196,19 +201,19 @@ fat(B(r4), (145, 21), PINK)
 # ---------------- column 4: robot ----------------
 panel(166, 2, 32, 100, "robot", "Robot Learning", title_y=4.7, fs=15.5)
 g = box(168.5, 9, 27, 15, "", "robot", lw=2.4)
-head(182, 19.6, "Simulator grounding", "robot", fs=11.5)
+head(182, 19.6, "Simulator grounding", "robot", fs=12.5)
 ax.text(182, 13.6, "settled starts · carved\ncollision · cup bases", ha="center", va="center", fontsize=10,
         color="#333", zorder=6, linespacing=1.2)
 rt = box(168.5, 28, 27, 20, "", "robot", lw=2.4)
-ax.text(170.5, 38, "Retarget\nMANO →\nSharpa", fontsize=11.5, color=C["robot"][2], weight="bold", ha="left",
+ax.text(170.5, 38, "Retarget\nMANO →\nSharpa", fontsize=12.5, color=C["robot"][2], weight="bold", ha="left",
         va="center", zorder=6, linespacing=1.15)
 img("sharpa_hand.png", 182, 28.5, 13, 19, crop=(0.1, 0.9, 0.3, 0.75), frame=False)
 sac = box(168.5, 52, 27, 15, "", "robot", lw=2.4, fill="#f7f7f5")
-head(182, 62.4, "FlashSAC per episode", "robot", fs=11.5)
+head(182, 62.4, "FlashSAC per episode", "robot", fs=12.5)
 ax.text(182, 56.8, "task + contact-aware\nreward, 2 seeds", ha="center", va="center", fontsize=10,
         color="#333", zorder=6, linespacing=1.2)
 ev = box(168.5, 71, 27, 9, "", "robot", lw=2.4)
-head(182, 76.4, "Official evaluator", "robot", fs=11.5)
+head(182, 76.4, "Official evaluator", "robot", fs=12.5)
 ax.text(182, 73.2, "per-episode best run", ha="center", va="center", fontsize=10, color="#333", zorder=6)
 img("rollout_4.png", 168.5, 84.5, 13.2, 9.3); img("rollout_14.png", 182.3, 84.5, 13.2, 9.3)
 ax.text(182, 98.3, "Kaggle rollouts\n+ meshes", fontsize=11.5, color=C["robot"][2], weight="bold", ha="center",
@@ -216,7 +221,7 @@ ax.text(182, 98.3, "Kaggle rollouts\n+ meshes", fontsize=11.5, color=C["robot"][
 for a_, b_ in ((g, rt), (rt, sac), (sac, ev)):
     fat(T(a_), B(b_), GREYA)
 fat(T(ev), (182, 84.5), GREYA)
-fat((163, 11.5), (168.5, 16), PINK)
+fat((163, 11.5), (168.5, 11.5), PINK)
 
 for ext in ("pdf", "svg", "png"):
     fig.savefig(D / f"arch.{ext}", dpi=170 if ext == "png" else None, facecolor="white")
