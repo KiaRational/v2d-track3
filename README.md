@@ -6,7 +6,6 @@ Our **V2D Challenge 2026, Track 3** entry. We take one head-mounted video of a p
 turn it into a **Sharpa-hand policy** that re-enacts the task in FlashCHORD. We do not use organiser scans or mocap:
 the meshes, poses and hands all come from the video.
 
-👥 Kiarash Ghasemzadeh, Matthew E. Taylor — University of Alberta & Amii
 
 ![System architecture](docs/figures/arch.png)
 
@@ -47,7 +46,7 @@ Full system description: [`docs/SYSTEM.md`](docs/SYSTEM.md).
 
 | AUC | SP-SR | MP-SR | RPE | MPPE | CD-O |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| 0.584 | 0.65 | 0.15 | 7.35 cm | 6.06 cm | 0.401 cm |
+| 0.584 | 0.65 | 0.20 | 7.35 cm | 6.06 cm | 0.401 cm |
 
 ## 🚀 How to run
 
