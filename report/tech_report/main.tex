@@ -76,8 +76,8 @@ Our contributions:
 FoundationStereo~\citep{wen2025foundationstereo} for metric depth and DROID-SLAM~\citep{teed2021droid} for ego-motion, and
 fit the round table plane for gravity. SAM~3~\citep{carion2025sam3} segments objects and hands. Object meshes come from
 SAM~3D Objects~\citep{chen2025sam3d} on automatically picked unoccluded views, metrically scaled by stereo depth; the
-consensus of several samples is kept. Hands are WiLoR~\citep{potamias2025wilor} keypoints triangulated across the stereo
-pair and fitted with MANO~\citep{romero2017mano}, gaps filled by Dyn-HaMR~\citep{yu2025dynhamr}.
+consensus of several samples is kept. Hands are Dyn-HaMR~\citep{yu2025dynhamr} MANO~\citep{romero2017mano} trajectories in metric scale;
+the few frames it misses (3157392\%) fall back to WiLoR~\citep{potamias2025wilor} keypoints triangulated across the stereo pair.
 
 \paragraph{Object trajectories (\method).} For every frame $t$ we keep all $K\!\approx\!252$ refined FoundationPose
 hypotheses $X_t^k$ with scores $s_t^k$, instead of the argmax. TrackEverything~\citep{jain2026trackeverything} supplies
@@ -103,9 +103,9 @@ symmetric cups. A VICON-style soft pose graph~\citep{jeon2026vicon} improved moc
 translate each hand (time-smoothed) out of every object. Resting objects carried a $\sim$12$^\circ$ tilt about the camera's
 horizontal axis---the least observable direction---and tipped at reset; we drop each scene into the simulator for 2\,s
 without the robot and adopt the settled poses as initial rests (accepted if $\leq$20$^\circ$/3\,cm). Collision is CoACD
-\citep{wei2022coacd} on walls only for containers, a dish-rack slot is carved where the sweeper really stood, and cups get
-a solid base. Two meshes were corrected from measurements: the pitcher base (resting 36\,mm above the table in three
-episodes) and the dust pan thickness (top surface vs.\ stereo depth: 17.3$\rightarrow$2.3\,mm).
+\citep{wei2022coacd} on 4\,mm walls (openings stay open), a dish-rack slot is carved where the sweeper really stood, and
+cups get a solid base. The pitcher mesh was lengthened at its base from a measurement (it rested 36\,mm above the table in
+all three pitcher episodes).
 
 \paragraph{Policy learning.} One FlashSAC~\citep{haarnoja2018sac,chordreport} policy per episode (2048 worlds,
 250\,M steps, real-time playback) with the reward
@@ -127,8 +127,8 @@ MP-SR, then SP-SR, then AUC.
     \toprule
     Submission & AUC$\uparrow$ & SP$\uparrow$ & MP$\uparrow$ & RPE$\downarrow$ & MPPE$\downarrow$ & CD-O$\downarrow$\\
     \midrule
-    fusion baseline (t3) & 0.504 & 0.50 & 0.15 & 9.23 & 8.60 & 0.407\\
-    + \method, grounding     & 0.532 & 0.55 & \textbf{0.20} & 8.10 & 7.82 & 0.407\\
+    \method + pose filter & 0.504 & 0.50 & 0.15 & 9.23 & 8.60 & 0.407\\
+    + physical filters, grounding & 0.532 & 0.55 & \textbf{0.20} & 8.10 & 7.82 & 0.407\\
     + 2nd seed               & 0.553 & 0.60 & 0.15 & 7.54 & 7.18 & 0.401\\
     + settled starts, friction & \textbf{0.584} & \textbf{0.65} & 0.15 & \textbf{7.35} & \textbf{6.06} & \textbf{0.401}\\
     \midrule
@@ -198,12 +198,6 @@ Code: \url{https://github.com/KiaRational/v2d-track3}.
   \centering
   \includegraphics[width=0.75\linewidth]{figures/fig8_sim_settle.png}
   \caption{Rotation of each resting object over 3\,s without the robot, before and after simulator settling.}
-\end{figure}
-
-\begin{figure}[h]
-  \centering
-  \includegraphics[width=\linewidth]{figures/fig10_dustpan_depth.png}
-  \caption{Dust pan resting pose: mesh top surface vs.\ stereo depth before and after thickness correction.}
 \end{figure}
 
 \end{document}

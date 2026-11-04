@@ -25,14 +25,22 @@ mocap is used only for offline development metrics (`beat1/bench_pose.py`, label
 
 ## 2. Architecture
 
+![System architecture](figures/arch.png)
+
+*Figure: system architecture (`report/arch/make_arch.py`; assets in `report/arch/assets/`, all from eval ep. 33).*
+
+The same flow as a Mermaid diagram:
+
 ```mermaid
 flowchart TD
+  Q["VLM task + object naming<br/>Qwen3-VL, stages/objects_v2/vlm_objects.py"] --> M
+  V["Egocentric video<br/>colour + stereo pair"] --> Q
   V["Egocentric video<br/>colour + stereo pair"] --> C["Calibration fix-up<br/>stages/s01*"]
   C --> D["Metric stereo depth<br/>FoundationStereo"]
   C --> S["Camera ego-motion<br/>DROID-SLAM, recon_hawor/slam_poses"]
-  V --> M["Object + hand masks<br/>SAM 3, s05_objects_v2 --segmenter sam3"]
+  V --> M["Object + hand masks<br/>SAM 3 with the VLM prompts, s05_objects_v2 --segmenter sam3"]
   M --> R["Object meshes<br/>SAM 3D Objects + stereo scale<br/>meshes_recon"]
-  V --> H["Hands<br/>WiLoR → stereo triangulation → MANO fit,<br/>Dyn-HaMR fill → hands_c"]
+  V --> H["Hands<br/>Dyn-HaMR, metric MANO; WiLoR stereo fallback under 2 percent → hands_c"]
   D & S & M & R --> P1["FoundationPose: ALL ~252 candidates per frame<br/>stereo/fp_hyps.py"]
   D & S & M --> P2["3D point tracks on object surfaces<br/>TrackEverything, stereo/te_obj_tracks.py"]
   P1 & P2 & M --> P3["Whole-sequence candidate selection<br/>stereo/track_pose.py"]
@@ -40,7 +48,7 @@ flowchart TD
   H & P4 --> HD["Hands out of objects<br/>stereo/hand_depen.py → hands_dp"]
   P4 & HD --> E["Robot export: table-aligned world, rest settle,<br/>depenetration, robot/export_result_bundle.py"]
   E --> K["Retarget + convert to FlashCHORD sequence<br/>robot/run_convert.sbatch"]
-  K --> A["Simulation assets: masses, per-object collision,<br/>rack carving, cup bases, simulator-settled starts"]
+  K --> A["Simulation assets: masses, 4 mm wall collision,<br/>rack carving, cup bases, simulator-settled starts"]
   A --> T["RL: FlashSAC per episode<br/>task + contact reward, termination curriculum,<br/>contact friction 1.0 or 1.5, 2 seeds"]
   T --> EV["Official evaluator, every world valid<br/>robot/cmds/eval_valid.sh"]
   EV --> SEL["Per-episode best run<br/>MP-SR, then SP-SR, then AUC"]
@@ -62,7 +70,13 @@ Everything runs as Slurm jobs; heavy stages run in Apptainer images converted fr
 * **Table**: RANSAC plane + fixed-radius disk fit from stereo (`stereo/table_plane.py`, r = 0.2375 m; gravity = table
   normal).
 
-### 3.2 Segmentation and meshes
+### 3.2 Task, segmentation and meshes
+* **Task and object naming** (`stages/objects_v2/vlm_objects.py`): Qwen3-VL (local vLLM) sees 8 frames, describes the task and
+  names the manipulated objects with short noun phrases; given the episode's official object list it assigns one phrase
+  per object -> `<run>/vlm_objects.json`. These phrases are the SAM 3 text prompts (`s05_objects_v2.py --prompts vlm`,
+  the default; the hand-written table is the fallback). The masks used by the submitted runs were produced with the
+  hand-written table before this stage existed; `vlm_objects.py verify` measures that the VLM prompts give the same masks
+  (`<run>/vlm_objects_verify.json`).
 * **Masks**: SAM 3 video segmentation of each object and both hands (`objects_recon/masks/<id>/`; hands are ids 2, 3).
 * **Meshes** (`meshes_recon/<obj>/`): SAM 3D Objects from automatically picked unoccluded views of the evaluation videos;
   metric scale from stereo depth; several candidates per object, the consensus (minimum median Sim(3)-registered
@@ -70,13 +84,16 @@ Everything runs as Slurm jobs; heavy stages run in Apptainer images converted fr
   Wooden spoon (no public scan at all) built the same way. Data-driven corrections, each scripted with provenance:
   * water pitcher stretched 27.4 → 31.0 cm at its base: the resting pitcher floated 36 mm above the table in all three
     pitcher episodes with a consistent up-axis (`stereo/extend_mesh.py`; earlier ×1.2 uniform scale);
-  * dust pan thinned ×0.30 along its thin axis: top surface vs stereo depth 17.3 → 2.3 mm mean error
-    (`pipelines/t3/mesh_fit.py`, `dustpan_thin.sbatch`).
+  * the pitcher stretch is in the e20 submission (t7 tree);
+  * dust pan thinned ×0.30 along its thin axis (top surface vs stereo depth 17.3 → 2.3 mm mean error,
+    `pipelines/t3/mesh_fit.py`, `dustpan_thin.sbatch`) -- built and tested (t9), **not in any submitted run**: the e19
+    and e38 submissions use the original 3.1 cm dust pan.
 
 ### 3.3 Hands
-WiLoR keypoints in both stereo views → triangulation with Viterbi handedness and stereo/colour time-sync → MANO
-sequence fit (~6 mm MPJPE to triangulation); undetected frames filled from Dyn-HaMR → `stereo/hands_c` (MANO params +
-joints per frame, camera frame). Reference fingers were found 2–4 cm *inside* cups in most cup episodes, which makes the
+Dyn-HaMR (4D MANO from the moving camera), metrically scaled, provides 98 % of the hand frames of the scored episodes
+(10,152 of 10,340); where it has no track (188 frames) the stereo fit fills in: WiLoR keypoints in both stereo views →
+triangulation with Viterbi handedness and stereo/colour time-sync → MANO fit → `stereo/hands_c` (MANO params + joints per
+frame, camera frame). Reference fingers were found 2–4 cm *inside* cups in most cup episodes, which makes the
 simulator shove hand and object apart at reset; `stereo/hand_depen.py` translates the whole hand (time-smoothed) out of
 each object (cups treated as solids) → `stereo/hands_dp`.
 
@@ -107,8 +124,9 @@ each object (cups treated as solids) → `stereo/hands_dp`.
   sequence parquet (one row = whole episode), table support asset (`write_table_support.py`), floor.
 * **Physics assets**: realistic masses (cups 0.08 kg, pot 0.45 kg, …), inertia floor; contact friction 1.0 (default) or
   1.5 (sticky-hand variant).
-* **Collision** (`robot/fine_collision.py`): pre-split convex pieces (CoACD). Containers keep only walls so openings stay
-  open (rack 4 mm; cups 10 mm and pot / pitcher 8 mm in the t8 variant); solids decomposed solid.
+* **Collision** (`robot/fine_collision.py`): pre-split convex pieces (CoACD) of a 4 mm wall shell around every object
+  (openings such as cup and pot mouths and rack slots stay open). A per-object variant (solid non-containers, thicker cup
+  walls; `SHELL_MAP`, tree t8) was tested in the stability check and not trained.
   `robot/carve_collision.py` removes dish-rack pieces where another object really sat (sweeper in its slot);
   `robot/cup_base.py` adds a solid base piece to cups.
 * **Simulator-settled starts** (`robot/sim_settle_rest.py`): our resting poses carry a ~12° tilt toward/away from the
@@ -145,6 +163,19 @@ each object (cups treated as solids) → `stereo/hands_dp`.
   (`pipelines/t3/best3_selection.txt`); meshes are taken from the same simulator tree (`<obj>_visual.stl`) so poses and
   meshes share body frames; `submission/pack_best.sbatch` packs + preflights; `upload_*.sbatch` submits.
 
+### 3.8 What each best3 episode contains (audit)
+
+| run (episodes) | object poses | hands | sim assets | contact friction |
+|---|---|---|---|---|
+| t3 (e01 e14 e15) | `tpf_recon`: selection + pose filter | `hands_c` | 4 mm walls, no carving | 1.0 |
+| t6 / t6 seed 7 (e03 e32 / e06 e10 e30 e35 e37) | `tpfsut_recon`: + rest hold, spin guard, twist unwrap, rest on table | `hands_dp` | + rack carving | 1.0 |
+| t7 seed 7 (e20) | as t6 | `hands_dp` | + pitcher stretched | 1.0 |
+| t10 (e16 e28 e33 e36) | as t6 | `hands_dp` | + simulator-settled starts, cup bases | 1.0 |
+| t10 friction (e05 e08 e19 e25 e38) | as t6 | `hands_dp` | as t10 | 1.5 |
+
+All runs: reward `tracking_250m_task2`, FlashSAC 250 M steps, 4 mm wall collision; the dust pan mesh is the original
+(thinning not submitted); SAM 3 masks from the hand-written prompt table (VLM stage added afterwards and verified).
+
 ## 4. Results
 
 | submission | AUC ↑ | SP-SR ↑ | MP-SR ↑ | RPE ↓ | MPPE ↓ | CD-O ↓ | notes |
@@ -165,6 +196,10 @@ moving 0.887, resting 0.861; c14 + filter — moving 0.800, resting 0.884 (no la
 0.893, resting 0.882.
 
 ## 5. What did not work (kept in the repo, not in the pipeline)
+* Agentic plausibility review (`refine_agent/` critic + correctors; hoi4d Qwen3-VL reviewer accepting / rejecting
+  refinements): dropped. Its global refinement made most objects worse against public mocap, added spin to resting
+  objects (pot p00 16° → 183°), and its acceptance critic was calibrated on public mocap (not compliant). Replaced by the
+  scripted physical filters (§3.4) and the simulator stability check / settling (§3.5).
 * Rigid hand-locks of held objects (`rigidify`, `physfix`, `handlock` air-lock): our palm frame drifts 1–3 cm and objects
   rotate 5–20° in the hand → mocap accuracy 0.87 → 0.55–0.72.
 * Local optimisers (`hand_graph.py` VICON-style pose graph, `s06j_joint_hoi.py`): improve accuracy slightly but cannot

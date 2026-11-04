@@ -65,6 +65,15 @@ SAM3_PROMPTS = {
     "wooden_spoon": ["wooden spoon"],  # SAM 3 score 0.9+ on the spoon episodes (tmp_diag/spoon)
 }
 
+def sam3_prompts(run, names, mode):
+    """SAM 3 concept prompts per object: the VLM naming stage (vlm_objects.json) if present, else the table."""
+    vf = run / "vlm_objects.json"
+    if mode == "vlm" and vf.exists():
+        vp = json.loads(vf.read_text()).get("prompts", {})
+        return {nm: vp.get(nm) or SAM3_PROMPTS.get(nm, [nm.replace("_", " ")]) for nm in names}
+    return {nm: SAM3_PROMPTS.get(nm, [nm.replace("_", " ")]) for nm in names}
+
+
 def container(image, script, args):
     cmd = ["docker", "run", "--rm", "--gpus", "all", "-v", f"{ROOT}:{ROOT}", "-v", f"{HOME_CODE}:{HOME_CODE}",
            image, "python", str(HERE / script)] + [str(a) for a in args]
@@ -81,6 +90,9 @@ def main():
     ap.add_argument("--segmenter", choices=["sam2_gdino", "sam3"], default="sam2_gdino")
     ap.add_argument("--sam3_weights", default=str(W / "sam3"), help="local facebook/sam3 snapshot (gated)")
     ap.add_argument("--no_viz", action="store_true")
+    ap.add_argument("--prompts", choices=["vlm", "table"], default="vlm",
+                    help="vlm: SAM 3 text prompts from <run>/vlm_objects.json (objects_v2/vlm_objects.py, Qwen3-VL); "
+                         "table: the hand-written SAM3_PROMPTS (fallback when no VLM output exists)")
     ap.add_argument("--masks_only", action="store_true",
                     help="segmentation only, no mesh read (size-free validation), no FoundationPose: the masks our own "
                          "meshes are reconstructed from")
@@ -125,7 +137,7 @@ def main():
            "dets": str(dets), "hand_prompts": hand_prompts, "weights_dir": str(W / "sam2"),
            "masks_dir": str(masks_dir), "masks_ekf_dir": str(masks_ekf), "report": str(report),
            "passes": args.passes, "stride": args.stride, "segmenter": args.segmenter,
-           "sam3_weights_dir": args.sam3_weights, "text_prompts": {nm: SAM3_PROMPTS.get(nm, [nm.replace("_", " ")]) for nm in names}}
+           "sam3_weights_dir": args.sam3_weights, "text_prompts": sam3_prompts(run, names, args.prompts)}
     (work / "sam2_driver_cfg.json").write_text(json.dumps(cfg, indent=1))
     if not report.exists():
         container("v2d_sam2" if args.segmenter == "sam2_gdino" else "sam3", "sam2_driver.py",
