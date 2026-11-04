@@ -1,6 +1,6 @@
 """System architecture figure (style after the reference: coloured stage panels, white rounded method boxes, inline
 thumbnails from our own data, colour-coded flow arrows). Output: arch.pdf / arch.svg / arch.png.
-Assets: report/arch/assets (make_assets.py, make_assets2.py). Coordinates: 200 x 104 units."""
+Assets: report/arch/assets (make_assets.py, make_assets2.py). Coordinates: 200 x 92 units."""
 from pathlib import Path
 
 import matplotlib
@@ -24,9 +24,9 @@ C = {  # panel fill, border/accent, title
 }
 PINK, GREYA = "#d2463f", "#8d8d88"
 
-fig = plt.figure(figsize=(20, 10.4))
+fig = plt.figure(figsize=(20, 9.2))
 ax = fig.add_axes([0, 0, 1, 1])
-ax.set_xlim(0, 200); ax.set_ylim(0, 104); ax.set_aspect("equal"); ax.axis("off")
+ax.set_xlim(0, 200); ax.set_ylim(0, 92); ax.set_aspect("equal"); ax.axis("off")
 
 
 def panel(x, y, w, h, key, title=None, title_y=None, fs=15.5):
@@ -98,130 +98,113 @@ def head(x, y, s, key, fs=13.2):
 
 
 # ---------------- column 1: input ----------------
-panel(2, 44, 36, 58, "green", "Egocentric Episode", title_y=98.3)
+panel(2, 36, 36, 54, "green", "Egocentric Episode", title_y=86.6)
 for k, (nm, dx, dy) in enumerate((("video_2.png", 0, 6), ("video_6.png", 2.2, 3), ("video_10.png", 4.4, 0))):   # stacked frames
-    ax.add_patch(FancyBboxPatch((5.6 + dx, 61.2 + dy), 25.5, 19.1, boxstyle="round,pad=0,rounding_size=0.4", fc="#3a3a38",
+    ax.add_patch(FancyBboxPatch((5.6 + dx, 51.2 + dy), 25.5, 19.1, boxstyle="round,pad=0,rounding_size=0.4", fc="#3a3a38",
                                 ec="none", alpha=0.25, zorder=3))
-    img(nm, 5 + dx, 62 + dy, 25.5, 19.1, frame=False)
-label(9.95, 88.6, 20, 4.4, "raw video", "green", fs=11)
-box(8.5, 51, 23, 7.5, "colour camera +\nmono stereo pair", "green", fs=10.5)
-panel(2, 2, 36, 39, "green", "Task & Objects via VLM", title_y=37.4)
-vlm = box(5, 26, 30, 7, "Qwen3-VL (local)", "green", italic=True, fs=13)
-ax.text(20, 17.6, "“The person picks up a blue cup and a\nwooden spoon, stirs the contents of the\ncup with the spoon, "
-        "and then places\nboth items back on the table.”", ha="center", va="center", fontsize=10, style="italic",
-        color="#3f7a2a", linespacing=1.2)
-obj = box(5, 4.5, 30, 7, "“wooden spoon”, “blue cup”", "green", fs=11.2, bold=True)
-arrow(B(vlm), (20, 23.2), C["green"][1], lw=2)
-arrow((20, 12.3), T(obj), C["green"][1], lw=2)
+    img(nm, 5 + dx, 52 + dy, 25.5, 19.1, frame=False)
+label(9.95, 78.6, 20, 4.2, "raw video", "green", fs=11)
+box(8.5, 40, 23, 7.5, "colour camera +\nmono stereo pair", "green", fs=10.5)
+panel(2, 2, 36, 31, "green", "Task & Objects via VLM", title_y=29.8)
+vlm = box(5, 20.5, 30, 6, "Qwen3-VL (local)", "green", italic=True, fs=13)
+ax.text(20, 14.3, "“The person picks up a blue cup and a\nwooden spoon, stirs the contents of the\ncup with the spoon, "
+        "and then places\nboth items back on the table.”", ha="center", va="center", fontsize=9.5, style="italic",
+        color="#3f7a2a", linespacing=1.15)
+obj = box(5, 3, 30, 6, "“wooden spoon”, “blue cup”", "green", fs=11.2)
+arrow(B(vlm), (20, 18.0), C["green"][1], lw=2)
+arrow((20, 10.6), T(obj), C["green"][1], lw=2)
 
 # ---------------- column 2: estimators ----------------
-panel(42, 79, 82, 23, "yellow", "Hand Estimator", title_y=99.2)
-dh = box(44.5, 84, 15, 9, "Dyn-HaMR", "yellow", italic=True, fs=13)
-mf = box(63, 84.8, 21, 8.2, "metric MANO\ntrajectory", "yellow", fs=11.5, fill="#fff8e0")
-box(63, 80.6, 21, 3.4, "WiLoR stereo fallback (<2%)", "yellow", italic=True, fs=7.8)
-hp = box(88, 81.5, 15, 14, "hands out\nof objects", "yellow", fs=10.5, fill="#fff8e0")
-img("hand4d.png", 104.5, 80.0, 19, 17.5, crop=(0.3, 0.8, 0.15, 0.9), frame=False)
-math(114, 98.6, r"$\mathcal{M}^h_t$", 15)
-arrow(R(dh), L(mf), C["yellow"][1]); arrow(R(mf), (88, 88.9), C["yellow"][1]); arrow((103, 88.5), (106, 88.5), C["yellow"][1])
+YH = 78.75
+panel(42, 70, 82, 20, "yellow", "Hand Estimator", title_y=87.4)
+dh = box(44.5, YH - 4.25, 15, 8.5, "Dyn-HaMR", "yellow", italic=True, fs=13)
+mf = box(63, YH - 3.75, 21, 7.5, "metric MANO\ntrajectory", "yellow", fs=11.5, fill="#fff8e0")
+box(63, 71.2, 21, 3.1, "WiLoR stereo fallback (<2%)", "yellow", italic=True, fs=7.8)
+hp = box(88, YH - 6.5, 15, 13, "hands out\nof objects", "yellow", fs=10.5, fill="#fff8e0")
+img("hand4d.png", 104.5, 70.3, 19, 17, crop=(0.3, 0.8, 0.15, 0.9), frame=False)
+math(114, 87.6, r"$\mathcal{M}^h_t$", 15)
+arrow(R(dh), L(mf), C["yellow"][1]); arrow(R(mf), L(hp), C["yellow"][1]); arrow((103, YH), (106, YH), C["yellow"][1])
 
-panel(42, 50, 82, 26.5, "grey", "Metric Geometry", title_y=73.6, fs=13.5)
-fs_ = box(44.5, 61.5, 19.5, 7, "FoundationStereo", "grey", italic=True, fs=11)
-ds = box(44.5, 52, 19.5, 7, "DROID-SLAM", "grey", italic=True, fs=11.5)
-img("depth.png", 65.5, 59.5, 13.5, 10.8)
-math(72.2, 65, r"$D_t$", 17, col="white")
-img("slam.png", 82, 50.6, 18, 16.5, crop=(0.3, 0.85, 0.15, 0.85), frame=False)
-math(99.5, 63.5, r"$T_t$", 16)
-tpb = box(103, 61.5, 19, 7, "table plane", "grey", italic=True, fs=11)
-label(103, 52, 19, 7, r"gravity $\mathbf{g}$", "grey", fs=12)
-arrow(R(fs_), (65.5, 65), C["grey"][1]); arrow(R(ds), (82.5, 55.5), C["grey"][1])
-elbow([(79, 69.2), (112.5, 69.2), (112.5, 68.5)], C["grey"][1], lw=1.6)
-arrow(B(tpb), T((103, 52, 19, 7)), C["grey"][1], lw=1.6)
+panel(42, 44, 82, 23, "grey", "Metric Geometry", title_y=64.6, fs=13.5)
+fs_ = box(44.5, 54.5, 19.5, 6.5, "FoundationStereo", "grey", italic=True, fs=11)
+ds = box(44.5, 46, 19.5, 6.5, "DROID-SLAM", "grey", italic=True, fs=11.5)
+img("depth.png", 66, 52.3, 13.5, 10.5)
+math(72.7, 57.6, r"$D_t$", 17, col="white")
+img("slam.png", 82, 44.3, 18, 15.5, crop=(0.3, 0.85, 0.15, 0.85), frame=False)
+math(99.5, 56, r"$T_t$", 16)
+tpb = box(103, 53.5, 19, 6.5, "table plane", "grey", italic=True, fs=11)
+gr = label(103, 45.5, 19, 6, r"gravity $\mathbf{g}$", "grey", fs=12)
+arrow(R(fs_), (66, 57.75), C["grey"][1]); arrow(R(ds), (82.5, 49.25), C["grey"][1])
+elbow([(79.5, 62), (112.5, 62), (112.5, 60)], C["grey"][1], lw=1.6)
+arrow(B(tpb), T(gr), C["grey"][1], lw=1.6)
 
-panel(42, 2, 82, 45, "blue", "Object Estimator", title_y=5.0)
-s3 = box(44.5, 34, 21, 9, "SAM 3\n(text-prompted)", "blue", italic=True, fs=12)
-img("masks.png", 69, 31.5, 17, 13)
-math(84, 33.5, r"$\mathcal{S}^o_t$", 16)
-s3d = box(44.5, 18, 21, 8, "SAM 3D Objects\n+ stereo scale", "blue", italic=True, fs=11)
-img("meshes.png", 69, 13.5, 17, 13, crop=(0.15, 0.85, 0.1, 0.9))
-math(84, 15.5, r"$\mathcal{M}^o$", 16)
-fp = box(89.5, 34, 15, 9, "FoundationPose\nall ~252 hyp.", "blue", italic=True, fs=9.6)
-img("fp_hypotheses.png", 107, 31.5, 15, 13, crop=(0.15, 0.65, 0.5, 1.0))
-math(114.5, 46.2 - 0.9, r"$\{X^k_t\}$", 14)
-te = box(89.5, 18, 15, 9, "TrackEverything\n3D tracks", "blue", italic=True, fs=9.6)
-img("tracks.png", 107, 15.5, 15, 13, crop=(0.2, 0.7, 0.28, 0.95))
-math(114.5, 13.4, r"$p_n(t)$", 14)
-arrow(R(s3), (69, 38.5), C["blue"][1]); arrow((86, 38.5), L(fp), C["blue"][1])
-arrow(B(s3), T(s3d), C["blue"][1]); arrow(R(s3d), (69, 22), C["blue"][1])
-arrow((86, 22), L(te), C["blue"][1]); arrow((86, 25), (93, 34), C["blue"][1], rad=0.0, lw=1.8)
-arrow((104.5, 38.5), (107, 38.5), C["blue"][1]); arrow((104.5, 22.5), (107, 22.5), C["blue"][1])
-# geometry -> object estimator (depth + camera poses into FoundationPose and the tracker)
-elbow([(91, 50), (91, 47), (97, 43)], C["grey"][1], lw=2.2)
-ax.text(92.5, 48.3, r"$D_t,\ T_t$", fontsize=11, color=C["grey"][2], zorder=7)
+panel(42, 2, 82, 39, "blue", "Object Estimator", title_y=4.6)
+s3 = box(44.5, 29, 21, 8.5, "SAM 3\n(text-prompted)", "blue", italic=True, fs=12)
+img("masks.png", 69, 27, 17, 12.5)
+math(84, 28.8, r"$\mathcal{S}^o_t$", 16)
+s3d = box(44.5, 14, 21, 8, "SAM 3D Objects\n+ stereo scale", "blue", italic=True, fs=11)
+img("meshes.png", 69, 10, 17, 12.5, crop=(0.15, 0.85, 0.1, 0.9))
+math(84, 11.8, r"$\mathcal{M}^o$", 16)
+fp = box(89.5, 29, 15, 8.5, "FoundationPose\nall ~252 hyp.", "blue", italic=True, fs=9.6)
+img("fp_hypotheses.png", 107, 27, 15, 12.5, crop=(0.15, 0.65, 0.5, 1.0))
+math(114.5, 40.3, r"$\{X^k_t\}$", 12)
+te = box(89.5, 14, 15, 8, "TrackEverything\n3D tracks", "blue", italic=True, fs=9.6)
+img("tracks.png", 107, 10, 15, 12.5, crop=(0.2, 0.7, 0.28, 0.95))
+math(114.5, 8.3, r"$p_n(t)$", 13)
+arrow(R(s3), (69, 33.25), C["blue"][1]); arrow((86, 33.25), L(fp), C["blue"][1])
+arrow(B(s3), T(s3d), C["blue"][1]); arrow(R(s3d), (69, 18), C["blue"][1])
+arrow((86, 18), L(te), C["blue"][1]); arrow((86, 21), (93, 29), C["blue"][1], lw=1.8)
+arrow((104.5, 33.25), (107, 33.25), C["blue"][1]); arrow((104.5, 18), (107, 18), C["blue"][1])
+elbow([(91, 44), (91, 42), (96.5, 37.5)], C["grey"][1], lw=2.2)
+ax.text(92.3, 41.9, r"$D_t,\ T_t$", fontsize=11, color=C["grey"][2], zorder=7)
 
 # inputs -> estimators: one orthogonal trunk in the gap between the columns
 IN = "#5f8f45"
-ax.plot([34.9, 40], [74, 74], color=IN, lw=2.4, zorder=6, solid_capstyle="round")
-ax.plot([40, 40], [40.5, 88.5], color=IN, lw=2.4, zorder=6, solid_capstyle="round")
-ax.add_patch(plt.Circle((40, 74), 0.55, color=IN, zorder=7))
-for y_ in (88.5, 65.0, 55.5, 40.5):
+ax.plot([34.9, 40], [64.5, 64.5], color=IN, lw=2.4, zorder=6, solid_capstyle="round")
+ax.plot([40, 40], [35.5, YH], color=IN, lw=2.4, zorder=6, solid_capstyle="round")
+ax.add_patch(plt.Circle((40, 64.5), 0.55, color=IN, zorder=7))
+for y_ in (YH, 57.75, 49.25, 35.5):
     elbow([(40, y_), (44.5, y_)], IN)
-elbow([(35, 8), (40, 8), (40, 36), (44.5, 36)], C["green"][1])   # VLM object names -> SAM 3 prompts
+elbow([(35, 6), (40, 6), (40, 31), (44.5, 31)], C["green"][1])   # VLM object names -> SAM 3 prompts
 
 # ---------------- column 3: SelectTrack ----------------
-panel(127, 24, 36, 78, "red", "SelectTrack:\ninteraction-aware refinement", title_y=97.0, fs=14)
-r1 = box(129.5, 76, 31, 14, "", "red")
-head(145, 86.8, "Whole-sequence selection", "red")
-math(145, 80.4, r"$\min_{k_{1:T}}\sum_t u_t(\mathcal{S}^o_t,X^{k_t}_t,p_n)+\lambda\,m_t(p_n)$", 11.5)
-r2 = box(129.5, 61, 31, 11, "", "red")
-head(145, 68.8, "Speed-limit flip filter", "red")
-ax.text(145, 64, "keep / flip / skip, ≤20° & 6 cm / frame", ha="center", fontsize=10, color="#333", zorder=6)
-r3 = box(129.5, 44, 31, 13, "", "red")
-head(145, 53.6, "State-aware guards", "red")
-math(145, 49.4, r"$s_t\in\{\mathrm{resting},\,\mathrm{held}\}$", 12)
-ax.text(145, 46.0, "rest hold · spin guard · twist unwrap", ha="center", fontsize=9.5, color="#333", zorder=6)
-r4 = box(129.5, 27, 31, 13, "", "red")
-head(145, 36.6, "Contact sanity", "red")
-ax.text(145, 31.6, "objects rest on the table\nhands pushed out of objects", ha="center", fontsize=9.5, color="#333",
-        zorder=6, linespacing=1.2)
+panel(127, 24, 36, 66, "red", "SelectTrack:\ninteraction-aware refinement", title_y=85.4, fs=14)
+r1 = box(129.5, 66, 31, 12, "", "red")
+head(145, 74.6, "Whole-sequence selection", "red")
+math(145, 69.6, r"$\min_{k_{1:T}}\sum_t u_t(\mathcal{S}^o_t,X^{k_t}_t,p_n)+\lambda\,m_t(p_n)$", 11.5)
+r2 = box(129.5, 54.5, 31, 7, "Speed-limit flip filter", "red", fs=12.4)
+r3 = box(129.5, 39, 31, 11, "", "red")
+head(145, 46.4, "State-aware guards", "red")
+math(145, 42.4, r"$s_t\in\{\mathrm{resting},\,\mathrm{held}\}$", 12)
+r4 = box(129.5, 26.5, 31, 7, "Contact sanity", "red", fs=12.4)
 for a_, b_ in ((r1, r2), (r2, r3), (r3, r4)):
     fat(B(a_), T(b_), PINK)
 # estimators -> refinement: orthogonal, bundled
-elbow([(122, 88.5), (124.0, 88.5), (124.0, 50.5), (129.5, 50.5)], C["yellow"][1])
-elbow([(124.0, 50.5), (124.0, 33.5), (129.5, 33.5)], C["yellow"][1])
-ax.add_patch(plt.Circle((124.0, 50.5), 0.55, color=C["yellow"][1], zorder=7))
-elbow([(122, 38.5), (125.6, 38.5), (125.6, 83), (129.5, 83)], C["blue"][1], halo=True)
-ax.plot([122, 125.6, 125.6], [22.5, 22.5, 38.5], color=C["blue"][1], lw=2.4, zorder=6, solid_joinstyle="round")
-ax.add_patch(plt.Circle((125.6, 38.5), 0.55, color=C["blue"][1], zorder=7))
+elbow([(122, YH), (124.0, YH), (124.0, 44.5), (129.5, 44.5)], C["yellow"][1])
+elbow([(124.0, 44.5), (124.0, 30), (129.5, 30)], C["yellow"][1])
+ax.add_patch(plt.Circle((124.0, 44.5), 0.55, color=C["yellow"][1], zorder=7))
+elbow([(122, 33.25), (125.6, 33.25), (125.6, 72), (129.5, 72)], C["blue"][1], halo=True)
+ax.plot([122, 125.6, 125.6], [18, 18, 33.25], color=C["blue"][1], lw=2.4, zorder=6, solid_joinstyle="round")
+ax.add_patch(plt.Circle((125.6, 33.25), 0.55, color=C["blue"][1], zorder=7))
 
-panel(127, 2, 36, 19, "red", "4D HOI Reconstruction", title_y=18.2, fs=13)
+panel(127, 2, 36, 19.5, "red", "4D HOI Reconstruction", title_y=18.6, fs=13)
 img("scene4d_render.png", 128.5, 2.5, 19, 13.5, crop=(0.28, 0.82, 0.18, 0.88), frame=False)
 math(155.5, 9.5, r"$\{\mathcal{M}^h_t,\ X^o_t,\ \mathcal{M}^o\}$", 12)
-fat(B(r4), (145, 21), PINK)
+fat(B(r4), (145, 21.5), PINK)
 
 # ---------------- column 4: robot ----------------
-panel(166, 2, 32, 100, "robot", "Robot Learning", title_y=4.7, fs=15.5)
-g = box(168.5, 9, 27, 15, "", "robot", lw=2.4)
-head(182, 19.6, "Simulator grounding", "robot", fs=12.5)
-ax.text(182, 13.6, "settled starts · carved\ncollision · cup bases", ha="center", va="center", fontsize=10,
-        color="#333", zorder=6, linespacing=1.2)
-rt = box(168.5, 28, 27, 20, "", "robot", lw=2.4)
-ax.text(170.5, 38, "Retarget\nMANO →\nSharpa", fontsize=12.5, color=C["robot"][2], weight="bold", ha="left",
-        va="center", zorder=6, linespacing=1.15)
-img("sharpa_hand.png", 182, 28.5, 13, 19, crop=(0.1, 0.9, 0.3, 0.75), frame=False)
-sac = box(168.5, 52, 27, 15, "", "robot", lw=2.4, fill="#f7f7f5")
-head(182, 62.4, "FlashSAC per episode", "robot", fs=12.5)
-ax.text(182, 56.8, "task + contact-aware\nreward, 2 seeds", ha="center", va="center", fontsize=10,
-        color="#333", zorder=6, linespacing=1.2)
-ev = box(168.5, 71, 27, 9, "", "robot", lw=2.4)
-head(182, 76.4, "Official evaluator", "robot", fs=12.5)
-ax.text(182, 73.2, "per-episode best run", ha="center", va="center", fontsize=10, color="#333", zorder=6)
-img("rollout_4.png", 168.5, 84.5, 13.2, 9.3); img("rollout_14.png", 182.3, 84.5, 13.2, 9.3)
-ax.text(182, 98.3, "Kaggle rollouts\n+ meshes", fontsize=11.5, color=C["robot"][2], weight="bold", ha="center",
-        va="center", zorder=6, linespacing=1.1)
-for a_, b_ in ((g, rt), (rt, sac), (sac, ev)):
+panel(166, 2, 32, 88, "robot", "Robot Learning", title_y=84.6, fs=15.5)
+g = box(168.5, 8, 27, 8, "Simulator grounding", "robot", lw=2.4, fs=11.7)
+rt = box(168.5, 21, 27, 17, "", "robot", lw=2.4)
+ax.text(171, 29.5, "Retarget", fontsize=13, color=C["robot"][2], weight="bold", ha="left", va="center", zorder=6)
+img("sharpa_hand.png", 183, 21.5, 12, 16, crop=(0.1, 0.9, 0.3, 0.75), frame=False)
+sac = box(168.5, 43, 27, 7, "SAC", "robot", lw=2.4, fs=12.5)
+pi = box(168.5, 55, 27, 7, r"Robot policy $\pi$", "robot", lw=2.4, fs=12.5, fill="#f7f7f5")
+img("rollout_4.png", 168.5, 68.5, 13.2, 9.3); img("rollout_14.png", 182.3, 68.5, 13.2, 9.3)
+for a_, b_ in ((g, rt), (rt, sac), (sac, pi)):
     fat(T(a_), B(b_), GREYA)
-fat(T(ev), (182, 84.5), GREYA)
-fat((163, 11.5), (168.5, 11.5), PINK)
+fat(T(pi), (182, 68.5), GREYA)
+fat((163, 12), (168.5, 12), PINK)
 
 for ext in ("pdf", "svg", "png"):
     fig.savefig(D / f"arch.{ext}", dpi=170 if ext == "png" else None, facecolor="white")
